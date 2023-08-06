@@ -18,26 +18,39 @@
 namespace bustub {
 
 #define INDEXITERATOR_TYPE IndexIterator<KeyType, ValueType, KeyComparator>
-
 INDEX_TEMPLATE_ARGUMENTS
 class IndexIterator {
+  using LeafPage = BPlusTreeLeafPage<KeyType, ValueType, KeyComparator>;
+
  public:
   // you may define your own constructor based on your member variables
-  IndexIterator();
+  IndexIterator(LeafPage *leaf, int pos, const KeyComparator &comparator, BufferPoolManager *buffer_pool_manager,
+                INDEXITERATOR_TYPE *end_iterator)
+      : leaf_(leaf),
+        pos_(pos),
+        comparator_(comparator),
+        buffer_pool_manager_(buffer_pool_manager),
+        end_iterator_(end_iterator) {}
   ~IndexIterator();  // NOLINT
-
   auto IsEnd() -> bool;
 
   auto operator*() -> const MappingType &;
 
-  auto operator++() -> IndexIterator &;
+  auto operator++() -> IndexIterator;
 
-  auto operator==(const IndexIterator &itr) const -> bool { throw std::runtime_error("unimplemented"); }
-
-  auto operator!=(const IndexIterator &itr) const -> bool { throw std::runtime_error("unimplemented"); }
+  auto operator==(const IndexIterator &itr) const -> bool {
+    bool res = leaf_ == itr.leaf_;
+    return res && pos_ == itr.pos_;
+  }
+  auto operator!=(const IndexIterator &itr) const -> bool { return !(*this == itr); }
 
  private:
   // add your own private member variables here
+  LeafPage *leaf_;
+  int pos_;  // the position of the k-v pairs in the node
+  KeyComparator comparator_;
+  BufferPoolManager *buffer_pool_manager_;
+  INDEXITERATOR_TYPE *end_iterator_;
 };
 
 }  // namespace bustub

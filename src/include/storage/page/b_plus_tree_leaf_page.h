@@ -49,6 +49,20 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto GetNextPageId() const -> page_id_t;
   void SetNextPageId(page_id_t next_page_id);
   auto KeyAt(int index) const -> KeyType;
+  auto ValueAt(int index) const -> ValueType;
+  auto PairAt(int index) -> MappingType &;
+  // insert key-value i
+  auto Insert(const KeyType &key, const ValueType &value, KeyComparator comparator_) -> bool;
+  // Clear all the k-v pairs in the node
+  void Clear();
+  // shift elements in array_ k steps to the right
+  void ShiftRight(int k);
+  // delete the key-value pair from this leaf
+  auto Delete(const KeyType &key, KeyComparator comparator_) -> bool;
+  auto IsUnderFull() -> bool;
+  auto IsFull() -> bool;
+  void MoveHalfInto(BPlusTreeLeafPage *L_, KeyComparator comparator_);
+  auto GetData() -> MappingType *;
 
  private:
   page_id_t next_page_id_;
