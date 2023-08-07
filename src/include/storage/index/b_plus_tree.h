@@ -69,7 +69,7 @@ class BPlusTree {
   // delete key from 'p'
   // returns the parent page_id of the calling function
   auto DeleteEntryLeaf(LeafPage *N, const KeyType &key, Transaction *transaction) -> page_id_t;
-  auto DeleteEntryInternal(InternalPage *N, const KeyType &key, Transaction *transaction) -> page_id_t;
+  auto DeleteEntryFromInternalPage(InternalPage *N, const KeyType &key, Transaction *transaction) -> page_id_t;
   void RedistributeLeaf(LeafPage *N, LeafPage *N_, KeyType K_);
   void RedistributeInternalPage(InternalPage *N, InternalPage *N_, KeyType K_);
   auto MergeLeaf(LeafPage *N, LeafPage *N_, KeyType K_, Transaction *transaction) -> LeafPage *;
@@ -113,6 +113,7 @@ class BPlusTree {
   auto IsSafe(Page *p, enum OPERATION operation) -> bool;
   void ReleaseLatches(Transaction *transaction);
   ReaderWriterLatch global_latch_;
+  std::mutex root_page_id_lock_;
 
  private:
   void UpdateRootPageId(int insert_record = 0);
@@ -130,5 +131,4 @@ class BPlusTree {
   INDEXITERATOR_TYPE *end_iterator_;
   void ReassignParentLinks(InternalPage *p_node, InternalPage *p_prime_node);
 };
-
 }  // namespace bustub

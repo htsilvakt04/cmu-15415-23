@@ -39,10 +39,18 @@ class IndexIterator {
   auto operator++() -> IndexIterator;
 
   auto operator==(const IndexIterator &itr) const -> bool {
-    bool res = leaf_ == itr.leaf_;
+    if (leaf_ == nullptr) {
+      return itr.leaf_ == nullptr && pos_ == 0 && itr.pos_ == 0;
+    }
+    if (itr.leaf_ == nullptr) {
+      return leaf_ == nullptr && pos_ == 0 && itr.pos_ == 0;
+    }
+
+    bool res = leaf_->GetPageId() == itr.leaf_->GetPageId();
     return res && pos_ == itr.pos_;
   }
-  auto operator!=(const IndexIterator &itr) const -> bool { return !(*this == itr); }
+
+  auto operator!=(const IndexIterator &itr) const -> bool { return !this->operator==(itr); }
 
  private:
   // add your own private member variables here

@@ -117,9 +117,6 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetData() -> std::pair<KeyType, ValueType> * { 
 INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(const KeyType &key, const ValueType &value, KeyComparator comparator_) -> bool {
   int insert_idx = 0;
-  if (IsFull()) {
-    return false;
-  }
 
   int size = GetSize();
   // find the first position where the key of the node is >= key
