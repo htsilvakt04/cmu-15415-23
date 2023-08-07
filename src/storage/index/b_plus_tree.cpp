@@ -108,22 +108,8 @@ auto BPLUSTREE_TYPE::FindLeaf(const KeyType &search_key, Transaction *transactio
   // find the leaf contains search_key
   while (!parent_node->IsLeafPage()) {
     page_id_t child_page_id = INVALID_PAGE_ID;
-    bool found = false;
-    int i;
     auto parent_node_tmp = reinterpret_cast<InternalPage *>(parent_page);
-    // traverse the whole keys to find the first key >= search_key
-    for (i = 0; i < parent_node_tmp->GetSize(); ++i) {
-      if (comparator_(parent_node_tmp->KeyAt(i), search_key) > 0) {
-        found = true;
-        break;
-      }
-    }  // end for
-    if (!found) {
-      // take the last pointer, and move to the subtree there
-      child_page_id = parent_node_tmp->ValueAt(parent_node_tmp->GetSize() - 1);
-    } else {  // take the left subtree
-      child_page_id = parent_node_tmp->ValueAt(i - 1);
-    }
+    child_page_id = parent_node_tmp->Lookup(search_key, comparator_);
 
     // found the child
     auto child_page = buffer_pool_manager_->FetchPage(child_page_id);
@@ -326,9 +312,7 @@ auto BPLUSTREE_TYPE::InsertInLeaf(Page *node, const KeyType &key, const ValueTyp
   KeyType k = right_l->KeyAt(0);
 
   InsertInParent(left_l, k, right_l, transaction);
-  right_l->SetParentPageId(left_l->GetParentPageId());
   // release the latch
-  ReleaseLatches(transaction);
   node->WUnlatch();
   // remember to unpin the page and set dirty flag
   buffer_pool_manager_->UnpinPage(left_l->GetPageId(), true);
@@ -341,6 +325,7 @@ void BPLUSTREE_TYPE::InsertInParent(BPlusTreePage *L, const KeyType &key, BPlusT
   // If L is root, then it means we need to create a new root
   if (L->IsRootPage()) {
     CreateNewNonLeafTree(L, L_, key);
+    ReleaseLatches(transaction);
     return;
   }
   InternalPage *p_prime_node = nullptr;
@@ -348,6 +333,8 @@ void BPLUSTREE_TYPE::InsertInParent(BPlusTreePage *L, const KeyType &key, BPlusT
 
   if (!parent_node->IsFull()) {
     parent_node->Insert(key, L_->GetPageId(), comparator_);
+    L_->SetParentPageId(parent_node->GetPageId());
+    ReleaseLatches(transaction);
   } else {
     // if it is full => we need to split
     auto n = sizeof(MappingType) * (parent_node->GetSize() + 1);

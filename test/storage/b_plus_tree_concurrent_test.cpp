@@ -109,7 +109,7 @@ void DeleteHelperSplit(BPlusTree<GenericKey<8>, RID, GenericComparator<8>> *tree
   delete transaction;
 }
 
-TEST(BPlusTreeConcurrentTest, DISABLED_InsertTest1) {
+TEST(BPlusTreeConcurrentTest, InsertTest1) {
   // create KeyComparator and index schema
   auto key_schema = ParseCreateStatement("a bigint");
   GenericComparator<8> comparator(key_schema.get());
@@ -187,7 +187,6 @@ TEST(BPlusTreeConcurrentTest, InsertTest2) {
     index_key.SetFromInteger(key);
     tree.GetValue(index_key, &rids);
     EXPECT_EQ(rids.size(), 1);
-    std::cout << "key: " << key  << std::endl;
     int64_t value = key & 0xFFFFFFFF;
     EXPECT_EQ(rids[0].GetSlotNum(), value);
   }
@@ -210,7 +209,7 @@ TEST(BPlusTreeConcurrentTest, InsertTest2) {
   remove("test.db");
   remove("test.log");
 }
-TEST(BPlusTreeConcurrentTest, DISABLED_DeleteTest1) {
+TEST(BPlusTreeConcurrentTest, DeleteTest1) {
   // create KeyComparator and index schema
   auto key_schema = ParseCreateStatement("a bigint");
   GenericComparator<8> comparator(key_schema.get());
@@ -251,7 +250,7 @@ TEST(BPlusTreeConcurrentTest, DISABLED_DeleteTest1) {
   remove("test.db");
   remove("test.log");
 }
-TEST(BPlusTreeConcurrentTest, DISABLED_DeleteTest2) {
+TEST(BPlusTreeConcurrentTest, DeleteTest2) {
   // create KeyComparator and index schema
   auto key_schema = ParseCreateStatement("a bigint");
   GenericComparator<8> comparator(key_schema.get());
@@ -293,7 +292,7 @@ TEST(BPlusTreeConcurrentTest, DISABLED_DeleteTest2) {
   remove("test.db");
   remove("test.log");
 }
-TEST(BPlusTreeConcurrentTest, DISABLED_MixTest) {
+TEST(BPlusTreeConcurrentTest, MixTest) {
   // create KeyComparator and index schema
   auto key_schema = ParseCreateStatement("a bigint");
   GenericComparator<8> comparator(key_schema.get());
