@@ -9,11 +9,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <iostream>
-#include <sstream>
-
-#include "common/exception.h"
 #include "storage/page/b_plus_tree_internal_page.h"
+#include <iostream>
 
 namespace bustub {
 /*****************************************************************************
@@ -65,17 +62,29 @@ INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::IsFull() -> bool { return GetSize() == GetMaxSize(); }
 
 INDEX_TEMPLATE_ARGUMENTS
-auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::Lookup(const KeyType &key, const KeyComparator &comparator) const -> ValueType {
-  auto target = std::lower_bound(array_ + 1, array_ + GetSize(), key,
-                                 [&comparator](const auto &pair, auto k) { return comparator(pair.first, k) < 0; });
-  if (target == array_ + GetSize()) {
+auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::BinSearch(const KeyType &key, const KeyComparator &comparator) const -> ValueType {
+  if (comparator(key, KeyType{}) == 0) {
+    return ValueAt(0);
+  }
+
+  auto custom_comparator = [&comparator](const MappingType &mapping, const KeyType &searchKey) {
+    return comparator(mapping.first, searchKey) < 0;
+  };
+  auto it = std::lower_bound(array_ + 1, array_ + GetSize(), key, custom_comparator);
+
+  // If no key is greater than the search key, return the value of the last key
+  if (it == array_ + GetSize()) {
     return ValueAt(GetSize() - 1);
   }
-  if (comparator(target->first, key) == 0) {
-    return target->second;
+  // they key equal, so we return this key
+  if (comparator(it->first, key) == 0) {
+    return it->second;
   }
-  return std::prev(target)->second;
+
+  // Return the value at the previous key
+  return std::prev(it)->second;
 }
+
 INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_INTERNAL_PAGE_TYPE::Insert(const KeyType &key, const ValueType &value, KeyComparator comparator_) {
   int insert_idx = 0;

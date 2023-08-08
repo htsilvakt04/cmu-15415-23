@@ -63,6 +63,7 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto IsFull() -> bool;
   void MoveHalfInto(BPlusTreeLeafPage *L_, KeyComparator comparator_);
   auto GetData() -> MappingType *;
+  auto BinSearch(const KeyType &key, bool *found, const KeyComparator &comparator) const -> ValueType;
 
  private:
   page_id_t next_page_id_;

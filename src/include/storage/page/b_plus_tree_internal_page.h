@@ -48,7 +48,7 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   auto IsFull() -> bool;
   auto Delete(const KeyType &key, KeyComparator comparator_) -> bool;
   void MoveHalfInto(BPlusTreeInternalPage *l_prime, KeyComparator comparator_);
-  auto Lookup(const KeyType &key, const KeyComparator &comparator) const -> ValueType;
+  auto BinSearch(const KeyType &key, const KeyComparator &comparator) const -> ValueType;
 
  private:
   // Flexible array member for page data.

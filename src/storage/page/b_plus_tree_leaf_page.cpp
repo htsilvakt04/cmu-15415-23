@@ -9,11 +9,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <sstream>
-
-#include "common/exception.h"
-#include "common/rid.h"
 #include "storage/page/b_plus_tree_leaf_page.h"
+#include <sstream>
+#include "common/rid.h"
 
 namespace bustub {
 
@@ -86,6 +84,35 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::Delete(const KeyType &key, KeyComparator compar
 }
 INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::IsUnderFull() -> bool { return GetSize() < GetMaxSize() / 2; }
+
+INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::BinSearch(const KeyType &key, bool *found, const KeyComparator &comparator) const
+    -> ValueType {
+  // Binary search algorithm to find the index of the key
+  int left = 0;
+  int right = GetSize() - 1;
+
+  while (left <= right) {
+    int mid = left + (right - left) / 2;
+    const KeyType &mid_key = KeyAt(mid);
+
+    if (comparator(mid_key, key) == 0) {
+      *found = true;
+      // Key found, return the corresponding value
+      return ValueAt(mid);
+    }
+
+    if (comparator(mid_key, key) < 0) {
+      // The key we're looking for is greater, so search in the right half
+      left = mid + 1;
+    } else {
+      // The key we're looking for is smaller, so search in the left half
+      right = mid - 1;
+    }
+  }
+
+  return ValueType{-1};
+}
 
 INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::IsFull() -> bool { return GetSize() >= GetMaxSize(); }

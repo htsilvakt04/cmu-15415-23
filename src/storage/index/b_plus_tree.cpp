@@ -109,7 +109,7 @@ auto BPLUSTREE_TYPE::FindLeaf(const KeyType &search_key, Transaction *transactio
   while (!parent_node->IsLeafPage()) {
     page_id_t child_page_id = INVALID_PAGE_ID;
     auto parent_node_tmp = reinterpret_cast<InternalPage *>(parent_page);
-    child_page_id = parent_node_tmp->Lookup(search_key, comparator_);
+    child_page_id = parent_node_tmp->BinSearch(search_key, comparator_);
 
     // found the child
     auto child_page = buffer_pool_manager_->FetchPage(child_page_id);
@@ -155,13 +155,12 @@ auto BPLUSTREE_TYPE::GetValue(const KeyType &search_key, std::vector<ValueType> 
   auto *node = FindLeaf(search_key, transaction, OPERATION::SEARCH);
   auto leaf = reinterpret_cast<LeafPage *>(node);
   // scan it
-  int i;
-  for (i = 0; i < leaf->GetSize(); ++i) {
-    if (comparator_(leaf->KeyAt(i), search_key) == 0) {
-      res.push_back(leaf->ValueAt(i));
-      break;
-    }
+  bool found = false;
+  auto val = leaf->BinSearch(search_key, &found, comparator_);
+  if (found) {
+    res.push_back(val);
   }
+
   // release the latch
   node->RUnlatch();
   // unpin
@@ -170,14 +169,6 @@ auto BPLUSTREE_TYPE::GetValue(const KeyType &search_key, std::vector<ValueType> 
   return !result->empty();
 }
 
-INDEX_TEMPLATE_ARGUMENTS
-void BPLUSTREE_TYPE::InsertSorted(std::vector<KeyType> &keys, std::vector<page_id_t> &values, const KeyType &key,
-                                  const page_id_t value) {
-  auto it = std::lower_bound(keys.begin(), keys.end(), key, comparator_);
-  auto index = std::distance(keys.begin(), it);
-  keys.insert(it, key);
-  values.insert(values.begin() + index, value);
-}
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::CreateNewTree(const KeyType &key, const ValueType &value) -> LeafPage * {
   // create an empty leaf node L, which is also a new root
@@ -824,23 +815,6 @@ auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE {
   return iter;
 }
 
-// the caller must unpin the page
-INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::FindLeftMostLeaf() -> BPlusTree::LeafPage * {
-  global_latch_.RLock();
-  auto *root = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(root_page_id_));
-  // find the leaf contains search_key
-  while (!root->IsLeafPage()) {
-    page_id_t next_pg_id = root->ValueAt(0);
-    // unpin
-    buffer_pool_manager_->UnpinPage(root->GetPageId(), false);
-    // advance
-    root = reinterpret_cast<InternalPage *>(buffer_pool_manager_->FetchPage(next_pg_id));
-  }  // end while
-  global_latch_.RUnlock();
-  return reinterpret_cast<LeafPage *>(root);
-}
-
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::RightSibling(LeafPage *node) -> LeafPage * {
   auto page = reinterpret_cast<BPlusTreePage *>(node);
@@ -873,7 +847,6 @@ auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE {
   auto node = FindLeaf(key, nullptr, OPERATION::SEARCH);
   auto *leaf = reinterpret_cast<LeafPage *>(node);
   int pos = 0;
-  // todo, do Bin-search
   for (int i = 0; i < leaf->GetSize(); ++i) {
     if (comparator_(leaf->KeyAt(i), key) == 0) {
       pos = i;

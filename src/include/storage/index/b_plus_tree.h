@@ -95,10 +95,6 @@ class BPlusTree {
   // read data from file and insert one by one
   void InsertFromFile(const std::string &file_name, Transaction *transaction = nullptr);
   // for leaf node
-  void InsertSorted(std::vector<KeyType> &keys, std::vector<ValueType> &values, const KeyType &key,
-                    const ValueType &value);
-  // for internal node
-  void InsertSorted(std::vector<KeyType> &keys, std::vector<page_id_t> &values, const KeyType &key, page_id_t value);
   // read data from file and remove one by one
   void RemoveFromFile(const std::string &file_name, Transaction *transaction = nullptr);
   auto LeftSibling(InternalPage *node) -> InternalPage *;
