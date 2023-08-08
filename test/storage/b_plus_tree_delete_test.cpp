@@ -20,7 +20,7 @@
 
 namespace bustub {
 
-TEST(BPlusTreeTests, DISABLED_DeleteTest1) {
+TEST(BPlusTreeTests, DeleteTest1) {
   // create KeyComparator and index schema
   auto key_schema = ParseCreateStatement("a bigint");
   GenericComparator<8> comparator(key_schema.get());
@@ -39,7 +39,7 @@ TEST(BPlusTreeTests, DISABLED_DeleteTest1) {
   auto header_page = bpm->NewPage(&page_id);
   (void)header_page;
 
-  std::vector<int64_t> keys = {1, 2, 3, 4, 5};
+  std::vector<int64_t> keys = {1, 5, 134, 32, 12, 64, 89, 532, 124, 642, 99, 100, 16, 3, 29};
   for (auto key : keys) {
     int64_t value = key & 0xFFFFFFFF;
     rid.Set(static_cast<int32_t>(key >> 32), value);
@@ -58,7 +58,7 @@ TEST(BPlusTreeTests, DISABLED_DeleteTest1) {
     EXPECT_EQ(rids[0].GetSlotNum(), value);
   }
 
-  std::vector<int64_t> remove_keys = {1, 5};
+  std::vector<int64_t> remove_keys = {1, 5, 642, 99, 100, 16, 3, 29};
   for (auto key : remove_keys) {
     index_key.SetFromInteger(key);
     tree.Remove(index_key, transaction);
@@ -82,7 +82,7 @@ TEST(BPlusTreeTests, DISABLED_DeleteTest1) {
     }
   }
 
-  EXPECT_EQ(size, 3);
+  EXPECT_EQ(size, keys.size() - remove_keys.size());
 
   bpm->UnpinPage(HEADER_PAGE_ID, true);
   delete transaction;
@@ -92,7 +92,7 @@ TEST(BPlusTreeTests, DISABLED_DeleteTest1) {
   remove("test.log");
 }
 
-TEST(BPlusTreeTests, DISABLED_DeleteTest2) {
+TEST(BPlusTreeTests, DeleteTest2) {
   // create KeyComparator and index schema
   auto key_schema = ParseCreateStatement("a bigint");
   GenericComparator<8> comparator(key_schema.get());
@@ -111,7 +111,7 @@ TEST(BPlusTreeTests, DISABLED_DeleteTest2) {
   auto header_page = bpm->NewPage(&page_id);
   (void)header_page;
 
-  std::vector<int64_t> keys = {1, 2, 3, 4, 5};
+  std::vector<int64_t> keys = {1, 2, 3, 4, 5, 23, 134, 32, 12, 64, 89, 532, 124, 642, 753, 235, 21, 26};
   for (auto key : keys) {
     int64_t value = key & 0xFFFFFFFF;
     rid.Set(static_cast<int32_t>(key >> 32), value);
@@ -154,7 +154,7 @@ TEST(BPlusTreeTests, DISABLED_DeleteTest2) {
     }
   }
 
-  EXPECT_EQ(size, 1);
+  EXPECT_EQ(size, keys.size() - remove_keys.size());
 
   bpm->UnpinPage(HEADER_PAGE_ID, true);
   delete transaction;
