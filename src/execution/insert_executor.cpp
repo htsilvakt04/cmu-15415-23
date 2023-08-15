@@ -30,7 +30,7 @@ auto InsertExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
   auto cat = exec_ctx_->GetCatalog();
   auto table = cat->GetTable(plan_->TableOid());
   // get child tuple
-  Tuple child_tuple{};
+  Tuple child_tuple;
   RID child_rid;
   while (true) {
     const auto status = child_executor_->Next(&child_tuple, &child_rid);
@@ -39,13 +39,16 @@ auto InsertExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     }
 
     // insert into table
-    table->table_->InsertTuple(child_tuple, &child_rid, exec_ctx_->GetTransaction());
-    // insert into index
-    for (auto &index : cat->GetTableIndexes(table->name_)) {
-      index->index_->InsertEntry(child_tuple, child_rid, exec_ctx_->GetTransaction());
+    if (table->table_->InsertTuple(child_tuple, &child_rid, exec_ctx_->GetTransaction())) {
+      // insert into index
+      for (auto &index : cat->GetTableIndexes(table->name_)) {
+        index->index_->InsertEntry(
+            child_tuple.KeyFromTuple(table->schema_, index->key_schema_, index->index_->GetKeyAttrs()), child_rid,
+            exec_ctx_->GetTransaction());
+      }
+      // increment the count
+      c++;
     }
-    // increment the count
-    c++;
   }  // end while
 
   // report back the # of inserted rows

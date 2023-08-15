@@ -42,7 +42,10 @@ auto DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     table->table_->MarkDelete(child_rid, exec_ctx_->GetTransaction());
     // modify the indexes
     for (auto &index : cat->GetTableIndexes(table->name_)) {
-      index->index_->DeleteEntry(child_tuple, child_rid, exec_ctx_->GetTransaction());
+      index->index_->DeleteEntry(
+          child_tuple.KeyFromTuple(table->schema_, index->key_schema_, index->index_->GetKeyAttrs()),
+          child_rid,
+          exec_ctx_->GetTransaction());
     }
     // increment the count
     c++;
