@@ -49,14 +49,14 @@ auto NestedLoopJoinExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   while ((right_idx_ != -1 && right_idx_ < static_cast<int>(right_tuples_.size())) ||
          left_executor_->Next(&left_tuple_, &l_rid)) {
     // [INNER JOIN]
-    right_idx_ = right_idx_ != -1 ? right_idx_ : 0;
+    right_idx_ = (right_idx_ == -1 || right_idx_ >= static_cast<int>(right_tuples_.size())) ? 0 : right_idx_;
     // start from right_idx to the end
     for (unsigned i = right_idx_; i < right_tuples_.size(); ++i, ++right_idx_) {
       auto &r_tup = right_tuples_[i];
-      // check the cond
       if (!IsMatch(&left_tuple_, &r_tup)) {
         continue;
       }
+
       // turn on the flag
       found_ = true;
       // retrieve all columns from the left
@@ -107,9 +107,8 @@ auto NestedLoopJoinExecutor::IsMatch(const Tuple *left_tuple, const Tuple *right
 
   return !res.IsNull() && res.GetAs<bool>();
 }
-void NestedLoopJoinExecutor::CollectColumns(
-    std::vector<Value>* values, std::unique_ptr<AbstractExecutor>& executor, Tuple *tuple
-) {
+void NestedLoopJoinExecutor::CollectColumns(std::vector<Value> *values, std::unique_ptr<AbstractExecutor> &executor,
+                                            Tuple *tuple) {
   for (unsigned j = 0; j < executor->GetOutputSchema().GetColumnCount(); ++j) {
     values->push_back(tuple->GetValue(&executor->GetOutputSchema(), j));
   }
