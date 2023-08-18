@@ -11,10 +11,9 @@
 //===----------------------------------------------------------------------===//
 
 #pragma once
-
+#include <deque>
 #include <memory>
 #include <vector>
-
 #include "execution/executor_context.h"
 #include "execution/executors/abstract_executor.h"
 #include "execution/plans/seq_scan_plan.h"
@@ -52,5 +51,7 @@ class TopNExecutor : public AbstractExecutor {
  private:
   /** The topn plan node to be executed */
   const TopNPlanNode *plan_;
+  std::unique_ptr<AbstractExecutor> child_executor_;
+  std::deque<Tuple> queue_;
 };
 }  // namespace bustub

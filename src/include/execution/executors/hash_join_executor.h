@@ -53,7 +53,7 @@ class HashJoinExecutor : public AbstractExecutor {
 
  private:
   /** The NestedLoopJoin plan node to be executed. */
-  const HashJoinPlanNode *plan_;
+  const HashJoinPlanNode *plan_{};
 };
 
 }  // namespace bustub
