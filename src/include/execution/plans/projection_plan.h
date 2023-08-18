@@ -36,10 +36,7 @@ class ProjectionPlanNode : public AbstractPlanNode {
    * @param expressions The expression to evaluate
    * @param child The child plan node
    */
-  ProjectionPlanNode(
-      SchemaRef output,
-      std::vector<AbstractExpressionRef> expressions,
-      AbstractPlanNodeRef child)
+  ProjectionPlanNode(SchemaRef output, std::vector<AbstractExpressionRef> expressions, AbstractPlanNodeRef child)
       : AbstractPlanNode(std::move(output), {std::move(child)}), expressions_(std::move(expressions)) {}
 
   /** @return The type of the plan node */

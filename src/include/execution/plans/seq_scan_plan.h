@@ -34,11 +34,8 @@ class SeqScanPlanNode : public AbstractPlanNode {
    * @param output The output schema of this sequential scan plan node
    * @param table_oid The identifier of table to be scanned
    */
-  SeqScanPlanNode
-      (SchemaRef output,
-       table_oid_t table_oid,
-       std::string table_name,
-       AbstractExpressionRef filter_predicate = nullptr)
+  SeqScanPlanNode(SchemaRef output, table_oid_t table_oid, std::string table_name,
+                  AbstractExpressionRef filter_predicate = nullptr)
       : AbstractPlanNode(std::move(output), {}),
         table_oid_{table_oid},
         table_name_(std::move(table_name)),
@@ -63,7 +60,7 @@ class SeqScanPlanNode : public AbstractPlanNode {
   /** The predicate to filter in seqscan.
    *  It will ALWAYS be nullptr until you enable the MergeFilterScan rule.
    *  You don't need to handle it to get a perfect score as of in Fall 2022.
-  */
+   */
   AbstractExpressionRef filter_predicate_;
 
  protected:

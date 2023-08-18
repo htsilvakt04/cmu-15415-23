@@ -34,7 +34,7 @@ void SortExecutor::Init() {
         if (expression->Evaluate(&b, schema).CompareLessThan(expression->Evaluate(&a, schema)) == CmpBool::CmpTrue) {
           return false;
         }
-      } else if (order_type == OrderByType::DESC){
+      } else if (order_type == OrderByType::DESC) {
         // is a > b
         if (expression->Evaluate(&a, schema).CompareGreaterThan(expression->Evaluate(&b, schema)) == CmpBool::CmpTrue) {
           return true;
@@ -44,7 +44,7 @@ void SortExecutor::Init() {
           return false;
         }
       }
-    } // end for
+    }              // end for
     return false;  // Default case if all comparisons are equal
   });
 }

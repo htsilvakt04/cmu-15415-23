@@ -37,7 +37,7 @@ void AggregationExecutor::Init() {
 
   // we need to support the case when there is no entries the in child AND
   // there is only 1 column output. That is: select count(*) from t1; when t1 is empty
-  if(aht_.Size() == 0 && GetOutputSchema().GetColumnCount() == 1) {
+  if (aht_.Size() == 0 && GetOutputSchema().GetColumnCount() == 1) {
     aht_.InsertEmpty();
   }
 
