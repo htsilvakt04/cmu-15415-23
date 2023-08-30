@@ -298,7 +298,13 @@ class LockManager {
   auto RunCycleDetection() -> void;
 
   static void TxnAddTableLock(Transaction *p_transaction, const table_oid_t &oid, LockMode mode);
-  bool LockIsFree(Transaction *p_transaction, LockMode mode, const table_oid_t &oid);
+  auto LockIsFree(LockMode mode, const table_oid_t &oid) -> bool;
+  auto IsHeldLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid, bool &upgrade_success,
+                  std::shared_ptr<LockRequest> &drop_request) -> bool;
+  auto CheckSatisfyTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request, LockMode lock_mode)
+      -> bool;
+  static auto IsConflictMode(const std::shared_ptr<LockRequest> &request, LockMode mode) -> bool;
+
  private:
   /** Fall 2022 */
   /** Structure that holds lock requests for a given table oid */
