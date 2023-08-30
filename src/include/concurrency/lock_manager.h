@@ -64,7 +64,7 @@ class LockManager {
   class LockRequestQueue {
    public:
     /** List of lock requests for the same resource (table or row) */
-    std::list<LockRequest *> request_queue_;
+    std::list<std::shared_ptr<LockRequest>> request_queue_;
     /** For notifying blocked transactions on this rid */
     std::condition_variable cv_;
     /** txn_id of an upgrading transaction (if any) */
@@ -129,7 +129,7 @@ class LockManager {
    *
    *    READ_UNCOMMITTED:
    *        The transaction is required to take only IX, X locks.
-   *        X, IX locks are allowed in the GROWING state.
+   *        IX, X locks are allowed in the GROWING state.
    *        S, IS, SIX locks are never allowed
    *
    *
@@ -162,8 +162,8 @@ class LockManager {
    *
    *
    * BOOK KEEPING:
-   *    If a lock is granted to a transaction, lock manager should update its
-   *    lock sets appropriately (check transaction.h)
+   *    If a lock is granted to a transaction, lock manager should update the transaction's lock sets
+   *    appropriately (check transaction.h)
    */
 
   /**
@@ -297,6 +297,8 @@ class LockManager {
    */
   auto RunCycleDetection() -> void;
 
+  static void TxnAddTableLock(Transaction *p_transaction, const table_oid_t &oid, LockMode mode);
+  bool LockIsFree(Transaction *p_transaction, LockMode mode, const table_oid_t &oid);
  private:
   /** Fall 2022 */
   /** Structure that holds lock requests for a given table oid */
