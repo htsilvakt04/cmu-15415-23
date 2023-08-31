@@ -312,6 +312,9 @@ class LockManager {
                                   std::unique_lock<std::mutex>& queue_lock, bool &is_abort) -> bool;
   auto RowLockIsFree(Transaction *txn, LockMode mode, const table_oid_t &oid, const RID &rid) -> bool;
   auto static IsConflictRowMode(const std::shared_ptr<LockRequest> &request, LockMode mode) -> bool;
+  void CheckTableUnlockAbortCond(Transaction *txn, const table_oid_t &oid, std::list<std::shared_ptr<LockRequest>>::iterator &table_iterator);
+  auto IsTxnHoldRowLock(Transaction *p_transaction, const table_oid_t &oid) const -> bool;
+  static void SetTxnState(Transaction *txn, LockMode mode);
  private:
   /** Fall 2022 */
   /** Structure that holds lock requests for a given table oid */
@@ -329,6 +332,7 @@ class LockManager {
   /** Waits-for graph representation. */
   std::unordered_map<txn_id_t, std::vector<txn_id_t>> waits_for_;
   std::mutex waits_for_latch_;
+
 };
 
 }  // namespace bustub
