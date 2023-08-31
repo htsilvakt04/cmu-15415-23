@@ -71,7 +71,6 @@ class LockManager {
     txn_id_t upgrading_ = INVALID_TXN_ID;
     /** coordination */
     std::mutex latch_;
-    std::shared_ptr<LockRequest> upgrade_req_ = nullptr;
   };
 
   /**
@@ -299,7 +298,7 @@ class LockManager {
   auto RunCycleDetection() -> void;
 
   static void TxnAddTableLock(Transaction *p_transaction, const table_oid_t &oid, LockMode mode);
-  auto LockIsFree(LockMode mode, const table_oid_t &oid, const std::shared_ptr<LockRequest> &req) -> bool;
+  auto LockIsFree(Transaction *txn, LockMode mode, const table_oid_t &oid) -> bool;
   auto IsHeldLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid,
                   std::unique_lock<std::mutex> &queue_lock, bool &is_abort) -> bool;
   auto CheckSatisfyTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request, LockMode lock_mode)
