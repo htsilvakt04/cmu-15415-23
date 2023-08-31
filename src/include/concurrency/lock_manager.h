@@ -67,7 +67,7 @@ class LockManager {
     std::list<std::shared_ptr<LockRequest>> request_queue_;
     /** For notifying blocked transactions on this rid */
     std::condition_variable cv_;
-    /** txn_id of an upgrading transaction (if any) */
+    /** txn_id of an upgrading transaction. Unset when there is no upgrading request. */
     txn_id_t upgrading_ = INVALID_TXN_ID;
     /** coordination */
     std::mutex latch_;
@@ -298,13 +298,20 @@ class LockManager {
   auto RunCycleDetection() -> void;
 
   static void TxnAddTableLock(Transaction *p_transaction, const table_oid_t &oid, LockMode mode);
+  static void TxnAddRowLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid, const RID &rid);
   auto LockIsFree(Transaction *txn, LockMode mode, const table_oid_t &oid) -> bool;
   auto IsHeldLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid,
                   std::unique_lock<std::mutex> &queue_lock, bool &is_abort) -> bool;
-  auto CheckSatisfyTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request, LockMode lock_mode)
-      -> bool;
+  void CheckSatisfyTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request, LockMode lock_mode);
+  void CheckSatisfyRowTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request,
+                                                  LockManager::LockMode upgrade_lock_mode);
   static auto IsConflictMode(const std::shared_ptr<LockRequest> &request, LockMode mode) -> bool;
-
+  void CheckAbortCond(Transaction *txn, const table_oid_t &oid, LockMode mode, bool is_lock_row = false);
+  void CheckRowTableCompatible(Transaction *txn, const table_oid_t &oid, LockMode row_mode);
+  auto IsHeldLockRow(Transaction *txn, LockMode row_lock_mode, const table_oid_t &oid, const RID &rid,
+                                  std::unique_lock<std::mutex>& queue_lock, bool &is_abort) -> bool;
+  auto RowLockIsFree(Transaction *txn, LockMode mode, const table_oid_t &oid, const RID &rid) -> bool;
+  auto static IsConflictRowMode(const std::shared_ptr<LockRequest> &request, LockMode mode) -> bool;
  private:
   /** Fall 2022 */
   /** Structure that holds lock requests for a given table oid */
