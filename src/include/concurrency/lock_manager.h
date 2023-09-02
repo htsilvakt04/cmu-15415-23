@@ -299,7 +299,7 @@ class LockManager {
 
   static void TxnAddTableLock(Transaction *p_transaction, const table_oid_t &oid, LockMode mode);
   static void TxnAddRowLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid, const RID &rid);
-  auto LockIsFree(Transaction *txn, LockMode mode, const table_oid_t &oid) -> bool;
+  auto LockIsFree(Transaction *txn, LockMode mode, const std::shared_ptr<LockRequestQueue>& table) -> bool;
   auto IsHeldLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid,
                   std::unique_lock<std::mutex> &queue_lock, bool &is_abort) -> bool;
   void CheckSatisfyTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request, LockMode lock_mode);

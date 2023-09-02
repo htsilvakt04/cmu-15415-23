@@ -28,9 +28,11 @@ auto LockManager::LockTable(Transaction *txn, LockMode lock_mode, const table_oi
   if (table_lock_map_.find(oid) == table_lock_map_.end()) {
     table_lock_map_[oid] = std::make_shared<LockRequestQueue>();
   }
-  table_lock_map_latch_.unlock();
   // hold the lock on the queue
-  std::unique_lock queue_lock(table_lock_map_[oid]->latch_);
+  auto table = table_lock_map_[oid];
+  std::unique_lock<std::mutex> queue_lock(table->latch_);
+  table_lock_map_latch_.unlock();
+
   bool is_abort = false;
   // check if we already hold the lock with the same lock mode
   if (IsHeldLock(txn, lock_mode, oid, queue_lock, is_abort)) {
@@ -43,13 +45,15 @@ auto LockManager::LockTable(Transaction *txn, LockMode lock_mode, const table_oi
 
   auto l_req = std::make_shared<LockRequest>(txn->GetTransactionId(), lock_mode, oid);
 	// add request to the queue
-  table_lock_map_[oid]->request_queue_.push_back(l_req);
+
+  table->request_queue_.push_back(l_req);
   /* We want to acquire the lock and put this thread to sleep if the lock is not free */
-  while (!LockIsFree(txn, lock_mode, oid)) {
-    table_lock_map_[oid]->cv_.wait(queue_lock);
+  while (!LockIsFree(txn, lock_mode, table)) {
+    table->cv_.wait(queue_lock);
     if (txn->GetState() == TransactionState::ABORTED) {
-      table_lock_map_[oid]->request_queue_.remove(l_req);
-      table_lock_map_[oid]->cv_.notify_all();
+      std::cout << "[REMOVE] FROM QUEUE" << std::endl;
+      table->request_queue_.remove(l_req);
+      table->cv_.notify_all();
       return false;
     }
   }
@@ -272,7 +276,8 @@ void LockManager::TxnAddRowLock(Transaction *txn, LockMode lock_mode, const tabl
 /// otherwise.
 auto LockManager::IsHeldLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid,
                              std::unique_lock<std::mutex> &queue_lock, bool &is_abort) -> bool  {
-  for (const auto &request : table_lock_map_[oid]->request_queue_) {
+  auto table = table_lock_map_[oid];
+  for (const auto &request : table->request_queue_) {
     if (request->txn_id_ == txn->GetTransactionId()) {
       // request the lock for this table before
       if (!request->granted_) {
@@ -287,7 +292,7 @@ auto LockManager::IsHeldLock(Transaction *txn, LockMode lock_mode, const table_o
       }
       // otherwise, we want to upgrade the lock
       // multiple attempts to upgrade lock
-      if (table_lock_map_[oid]->upgrading_ != INVALID_TXN_ID) {
+      if (table->upgrading_ != INVALID_TXN_ID) {
         txn->LockTxn();
         txn->SetState(TransactionState::ABORTED);
         txn->UnlockTxn();
@@ -299,21 +304,22 @@ auto LockManager::IsHeldLock(Transaction *txn, LockMode lock_mode, const table_o
       // drop the lock from the txn
       TxnRemoveTableLock(txn, oid, request->lock_mode_);
       // drop the current lock
-      table_lock_map_[oid]->request_queue_.remove(request);
+      table->request_queue_.remove(request);
       auto upgrade_req = std::make_shared<LockRequest>(txn->GetTransactionId(), lock_mode, oid);
       // reserve the upgrade position
-      table_lock_map_[oid]->request_queue_.push_back(upgrade_req);
+      table->request_queue_.push_back(upgrade_req);
       // set the upgrading
-      table_lock_map_[oid]->upgrading_ = txn->GetTransactionId();
+      table->upgrading_ = txn->GetTransactionId();
       // wait to get new lock granted
-      while (!LockIsFree(txn, lock_mode, oid)) {
-        table_lock_map_[oid]->cv_.wait(queue_lock);
+      while (!LockIsFree(txn, lock_mode, table)) {
+        table->cv_.wait(queue_lock);
         // if the txt was aborted, take action
         if (txn->GetState() == TransactionState::ABORTED) {
-          table_lock_map_[oid]->request_queue_.remove(upgrade_req);
+          std::cout << "[REMOVE] FROM QUEUE" << std::endl;
+          table->request_queue_.remove(upgrade_req);
           is_abort = true;
-          table_lock_map_[oid]->upgrading_ = INVALID_TXN_ID;
-          table_lock_map_[oid]->cv_.notify_all();
+          table->upgrading_ = INVALID_TXN_ID;
+          table->cv_.notify_all();
           return false;
         }
       }
@@ -321,7 +327,7 @@ auto LockManager::IsHeldLock(Transaction *txn, LockMode lock_mode, const table_o
       // set the lock to granted
       upgrade_req->granted_ = true;
       // clear the upgrade_req
-      table_lock_map_[oid]->upgrading_ = INVALID_TXN_ID;
+      table->upgrading_ = INVALID_TXN_ID;
       // add the granted lock to the txn
       TxnAddTableLock(txn, oid, lock_mode);
       return true;
@@ -386,15 +392,15 @@ void LockManager::CheckSatisfyRowTransitionCond(Transaction *txn, const std::sha
 /// \param mode
 /// \param oid
 /// \return true if no conflict, false otherwise.
-auto LockManager::LockIsFree(Transaction *txn, LockMode mode, const table_oid_t &oid) -> bool {
+auto LockManager::LockIsFree(Transaction *txn, LockMode mode, const std::shared_ptr<LockRequestQueue>& table) -> bool {
   // stop other threads from running before the upgrade request
-  if (table_lock_map_[oid]->upgrading_ != INVALID_TXN_ID &&
-      txn->GetTransactionId() != table_lock_map_[oid]->upgrading_) {
+  if (table->upgrading_ != INVALID_TXN_ID &&
+      txn->GetTransactionId() != table->upgrading_) {
     return false;
   }
 
   // given the current set of granted locks, does this 'mode' compatible with all of them?
-  for (const auto &request : table_lock_map_[oid]->request_queue_) {
+  for (const auto &request : table->request_queue_) {
     if (!NotConflictMode(request, mode, txn)) {
       return false;
     }

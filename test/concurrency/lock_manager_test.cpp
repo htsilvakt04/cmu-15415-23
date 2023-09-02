@@ -82,16 +82,15 @@ void TableLockTest1() {
       EXPECT_TRUE(res);
       CheckGrowing(txns[txn_id]);
     }
-//    for (const table_oid_t &oid : oids) {
-//      res = lock_mgr.UnlockTable(txns[txn_id], oid);
-//      EXPECT_TRUE(res);
-//      CheckShrinking(txns[txn_id]);
-//    }
-//    printf("---2222---\n");
-//    txn_mgr.Commit(txns[txn_id]);
-//    CheckCommitted(txns[txn_id]);
+    for (const table_oid_t &oid : oids) {
+      res = lock_mgr.UnlockTable(txns[txn_id], oid);
+      EXPECT_TRUE(res);
+      CheckShrinking(txns[txn_id]);
+    }
+    txn_mgr.Commit(txns[txn_id]);
+    CheckCommitted(txns[txn_id]);
     /** All locks should be dropped */
-//    CheckTableLockSizes(txns[txn_id], 0, 0, 0, 0, 0);
+    CheckTableLockSizes(txns[txn_id], 0, 0, 0, 0, 0);
   };
 
   std::vector<std::thread> threads;
