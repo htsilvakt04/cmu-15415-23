@@ -29,13 +29,14 @@ auto LockManager::LockTable(Transaction *txn, LockMode lock_mode, const table_oi
     table_lock_map_[oid] = std::make_shared<LockRequestQueue>();
   }
   // hold the lock on the queue
+  std::unique_lock<std::mutex> queue_lock(table_lock_map_[oid]->latch_);
   auto table = table_lock_map_[oid];
-  std::unique_lock<std::mutex> queue_lock(table->latch_);
+  // release the global latch for the map
   table_lock_map_latch_.unlock();
 
   bool is_abort = false;
   // check if we already hold the lock with the same lock mode
-  if (IsHeldLock(txn, lock_mode, oid, queue_lock, is_abort)) {
+  if (IsHeldLock(txn, lock_mode, oid, table, queue_lock, is_abort)) {
     return true;
   }
 
@@ -44,8 +45,7 @@ auto LockManager::LockTable(Transaction *txn, LockMode lock_mode, const table_oi
   }
 
   auto l_req = std::make_shared<LockRequest>(txn->GetTransactionId(), lock_mode, oid);
-	// add request to the queue
-
+  // add request to the queue
   table->request_queue_.push_back(l_req);
   /* We want to acquire the lock and put this thread to sleep if the lock is not free */
   while (!LockIsFree(txn, lock_mode, table)) {
@@ -67,22 +67,23 @@ auto LockManager::LockTable(Transaction *txn, LockMode lock_mode, const table_oi
 
 auto LockManager::UnlockTable(Transaction *txn, const table_oid_t &oid) -> bool {
   std::list<std::shared_ptr<LockRequest>>::iterator table_iter;
-  CheckTableUnlockAbortCond(txn, oid, table_iter);
+  // acquire the lock
+  table_lock_map_latch_.lock();
+  std::unique_lock<std::mutex> table_lock(table_lock_map_[oid]->latch_);
+  auto table = table_lock_map_[oid];
+  table_lock_map_latch_.unlock();
+  CheckTableUnlockAbortCond(txn, oid, table, table_iter);
   auto table_lock_req = *table_iter;
   auto mode = table_lock_req->lock_mode_;
-  if ((txn->GetState() != TransactionState::COMMITTED && txn->GetState() != TransactionState::ABORTED) &&
-      (mode == LockMode::SHARED || mode == LockMode::EXCLUSIVE)) {
-    SetTxnState(txn, mode);
-  }
-  // acquire the lock
-  std::unique_lock<std::mutex> table_lock(table_lock_map_[oid]->latch_);
+  SetTxnState(txn, mode);
+
   // remove table lock request
-  table_lock_map_[oid]->request_queue_.erase(table_iter);
+  table->request_queue_.erase(table_iter);
   table_lock.unlock();
   // remove from the txn
   TxnRemoveTableLock(txn, oid, table_lock_req->lock_mode_);
   // wakes up other threads
-  table_lock_map_[oid]->cv_.notify_all();
+  table->cv_.notify_all();
   return true;
 }
 
@@ -94,13 +95,14 @@ auto LockManager::LockRow(Transaction *txn, LockMode lock_mode, const table_oid_
   if (row_lock_map_.find(rid) == row_lock_map_.end()) {
     row_lock_map_[rid] = std::make_shared<LockRequestQueue>();
   }
-  row_lock_map_latch_.unlock();
-
   // hold the lock on the queue
   std::unique_lock queue_lock(row_lock_map_[rid]->latch_);
+  auto row = row_lock_map_[rid];
+  row_lock_map_latch_.unlock();
+
   // check if we already hold the lock with the same lock mode
   bool is_abort = false;
-  if (IsHeldLockRow(txn, lock_mode, oid, rid, queue_lock, is_abort)) {
+  if (IsHeldLockRow(txn, lock_mode, oid, rid, row, queue_lock, is_abort)) {
     return true;
   }
   if (is_abort) {
@@ -109,14 +111,14 @@ auto LockManager::LockRow(Transaction *txn, LockMode lock_mode, const table_oid_
 
   auto l_req = std::make_shared<LockRequest>(txn->GetTransactionId(), lock_mode, oid, rid);
   // add request to the waiting queue
-  row_lock_map_[rid]->request_queue_.push_back(l_req);
+  row->request_queue_.push_back(l_req);
 
   /* We want to acquire the lock and put this thread to sleep if the lock is not free */
   while (!RowLockIsFree(txn, lock_mode, oid, rid)) {
-    row_lock_map_[rid]->cv_.wait(queue_lock);
+    row->cv_.wait(queue_lock);
     if (txn->GetState() == TransactionState::ABORTED) {
-      row_lock_map_[rid]->request_queue_.remove(l_req);
-      row_lock_map_[rid]->cv_.notify_all();
+      row->request_queue_.remove(l_req);
+      row->cv_.notify_all();
       return false;
     }
   }
@@ -130,22 +132,26 @@ auto LockManager::LockRow(Transaction *txn, LockMode lock_mode, const table_oid_
 
 auto LockManager::UnlockRow(Transaction *txn, const table_oid_t &oid, const RID &rid) -> bool {
   std::list<std::shared_ptr<LockRequest>>::iterator row_iter;
-  CheckRowUnlockAbortCond(txn, oid, rid, row_iter);
+  row_lock_map_latch_.lock();
+  // acquire the lock
+  std::unique_lock<std::mutex> lock(row_lock_map_[rid]->latch_);
+  auto table = row_lock_map_[rid];
+  row_lock_map_latch_.unlock();
+  CheckRowUnlockAbortCond(txn, table, row_iter);
   auto row_lock_req = *row_iter;
   auto mode = row_lock_req->lock_mode_;
   SetTxnState(txn, mode);
-  // acquire the lock
-  std::unique_lock<std::mutex> lock(row_lock_map_[rid]->latch_);
+
   // remove table lock request
-  row_lock_map_[rid]->request_queue_.erase(row_iter);
+  table->request_queue_.erase(row_iter);
   lock.unlock();
   // remove from the txn
   TxnRemoveRowLock(txn, oid, rid, mode);
   // wakes up other threads
-  row_lock_map_[rid]->cv_.notify_all();
+  table->cv_.notify_all();
   return true;
 }
-void LockManager::CheckRowUnlockAbortCond(Transaction *txn, const table_oid_t &oid, const RID &rid,
+void LockManager::CheckRowUnlockAbortCond(Transaction *txn, const std::shared_ptr<LockRequestQueue> &table,
                                           std::list<std::shared_ptr<LockRequest>>::iterator &row_iterator) {
   //    * GENERAL BEHAVIOUR:
   //   *    Both UnlockTable() and UnlockRow() should release the lock on the resource and return.
@@ -159,18 +165,16 @@ void LockManager::CheckRowUnlockAbortCond(Transaction *txn, const table_oid_t &o
   //   *    as ABORTED and throw a TransactionAbortException (TABLE_UNLOCKED_BEFORE_UNLOCKING_ROWS).
   //   *
   //   *    Finally, unlocking a resource should also grant any new lock requests for the resource (if possible).
-  std::unique_lock<std::mutex> l(row_lock_map_[rid]->latch_);
-  std::unique_lock<std::mutex> k(txn->latch_);
-
-  auto row = row_lock_map_[rid];
   // lookup the row lock
-  auto row_itr = std::find_if(row->request_queue_.begin(), row->request_queue_.end(),
+  auto row_itr = std::find_if(table->request_queue_.begin(), table->request_queue_.end(),
                               [txn](const std::shared_ptr<LockRequest> &request) {
                                 return request->txn_id_ == txn->GetTransactionId() && request->granted_;
                               });
   // not found
-  if (row_itr == row->request_queue_.end()) {
+  if (row_itr == table->request_queue_.end()) {
+    txn->LockTxn();
     txn->SetState(TransactionState::ABORTED);
+    txn->UnlockTxn();
     throw TransactionAbortException(txn->GetTransactionId(), AbortReason::ATTEMPTED_UNLOCK_BUT_NO_LOCK_HELD);
   }
   // return the row_lock iterator
@@ -197,8 +201,7 @@ void LockManager::RunCycleDetection() {
 }
 void TxnRemoveTableLock(Transaction *txn, const table_oid_t &oid, LockManager::LockMode lock_mode) {
   // acquire lock on the transaction
-  std::lock_guard<std::mutex> lock(txn->latch_);
-
+  txn->LockTxn();
   switch (lock_mode) {
     case LockManager::LockMode::SHARED:
       txn->GetSharedTableLockSet()->erase(oid);
@@ -215,23 +218,24 @@ void TxnRemoveTableLock(Transaction *txn, const table_oid_t &oid, LockManager::L
     case LockManager::LockMode::SHARED_INTENTION_EXCLUSIVE:
       txn->GetSharedIntentionExclusiveTableLockSet()->erase(oid);
   }
+  txn->UnlockTxn();
 }
 
 void TxnRemoveRowLock(Transaction *txn, const table_oid_t &oid, const RID &rid, LockManager::LockMode lock_mode) {
   // acquire lock on the transaction
-  std::lock_guard<std::mutex> lock(txn->latch_);
-
+  txn->LockTxn();
   if (lock_mode == LockManager::LockMode::SHARED) {
     txn->GetSharedRowLockSet()->find(oid)->second.erase(rid);
   } else if (lock_mode == LockManager::LockMode::EXCLUSIVE) {
     txn->GetExclusiveRowLockSet()->find(oid)->second.erase(rid);
   }
+  txn->UnlockTxn();
 }
 
 // add the table lock to the txn
 void LockManager::TxnAddTableLock(Transaction *txn, const table_oid_t &oid, LockMode lock_mode) {
   // acquire lock on the transaction
-  std::lock_guard<std::mutex> lock(txn->latch_);
+  txn->LockTxn();
   // add to the table set
   switch (lock_mode) {
     case LockMode::SHARED:
@@ -249,22 +253,28 @@ void LockManager::TxnAddTableLock(Transaction *txn, const table_oid_t &oid, Lock
     case LockMode::SHARED_INTENTION_EXCLUSIVE:
       txn->GetSharedIntentionExclusiveTableLockSet()->insert(oid);
   }
+  txn->UnlockTxn();
 }
 
 void LockManager::TxnAddRowLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid, const RID &rid) {
   // acquire lock on the transaction
-  std::lock_guard<std::mutex> lock(txn->latch_);
+  txn->LockTxn();
   // add to the row set
-  switch (lock_mode) {
-    case LockMode::SHARED:
-      txn->GetSharedRowLockSet()->find(oid)->second.insert(rid);
-      break;
-    case LockMode::EXCLUSIVE:
-      txn->GetExclusiveRowLockSet()->find(oid)->second.insert(rid);
-      break;
-    default:
-      break;
+  if (lock_mode == LockMode::SHARED) {
+    auto s_row_lock_set = txn->GetSharedRowLockSet();
+    if (!s_row_lock_set) {
+      s_row_lock_set = std::make_shared<std::unordered_map<table_oid_t, std::unordered_set<RID>>>();
+    }
+    // insert it
+    (*s_row_lock_set)[oid].insert(rid);
+  } else if (lock_mode == LockMode::EXCLUSIVE) {
+    auto ex_row_lock_set = txn->GetExclusiveRowLockSet();
+    if (!ex_row_lock_set) {
+      ex_row_lock_set = std::make_shared<std::unordered_map<table_oid_t, std::unordered_set<RID>>>();
+    }
+    (*ex_row_lock_set)[oid].insert(rid);
   }
+  txn->UnlockTxn();
 }
 /// If hold the lock already and has the same mode => return true immediately. Otherwise, check the upgrading condition
 /// \param txn
@@ -275,8 +285,8 @@ void LockManager::TxnAddRowLock(Transaction *txn, LockMode lock_mode, const tabl
 /// locking request. \return false if there is no upgrade request or this txn not yet hold the table lock. return true
 /// otherwise.
 auto LockManager::IsHeldLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid,
-                             std::unique_lock<std::mutex> &queue_lock, bool &is_abort) -> bool  {
-  auto table = table_lock_map_[oid];
+                             std::shared_ptr<LockRequestQueue> &table, std::unique_lock<std::mutex> &queue_lock,
+                             bool &is_abort) -> bool {
   for (const auto &request : table->request_queue_) {
     if (request->txn_id_ == txn->GetTransactionId()) {
       // request the lock for this table before
@@ -338,7 +348,7 @@ auto LockManager::IsHeldLock(Transaction *txn, LockMode lock_mode, const table_o
 }
 void LockManager::CheckSatisfyTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request,
                                              LockMode upgrade_lock_mode) {
-  std::unique_lock lock(txn->latch_);
+  txn->LockTxn();
   //     While upgrading, only the following transitions should be allowed:
   //  IS -> [S, X, IX, SIX]
   //  S -> [X, SIX]
@@ -349,6 +359,7 @@ void LockManager::CheckSatisfyTransitionCond(Transaction *txn, const std::shared
   if (request->lock_mode_ == LockMode::SHARED) {
     if (upgrade_lock_mode != LockMode::EXCLUSIVE && upgrade_lock_mode != LockMode::SHARED_INTENTION_EXCLUSIVE) {
       txn->SetState(TransactionState::ABORTED);
+      txn->UnlockTxn();
       throw TransactionAbortException(request->txn_id_, AbortReason::INCOMPATIBLE_UPGRADE);
     }
   }
@@ -356,6 +367,7 @@ void LockManager::CheckSatisfyTransitionCond(Transaction *txn, const std::shared
   if (request->lock_mode_ == LockMode::INTENTION_EXCLUSIVE) {
     if (upgrade_lock_mode != LockMode::EXCLUSIVE && upgrade_lock_mode != LockMode::SHARED_INTENTION_EXCLUSIVE) {
       txn->SetState(TransactionState::ABORTED);
+      txn->UnlockTxn();
       throw TransactionAbortException(request->txn_id_, AbortReason::INCOMPATIBLE_UPGRADE);
     }
   }
@@ -363,13 +375,15 @@ void LockManager::CheckSatisfyTransitionCond(Transaction *txn, const std::shared
   if (request->lock_mode_ == LockMode::SHARED_INTENTION_EXCLUSIVE) {
     if (upgrade_lock_mode != LockMode::EXCLUSIVE) {
       txn->SetState(TransactionState::ABORTED);
+      txn->UnlockTxn();
       throw TransactionAbortException(request->txn_id_, AbortReason::INCOMPATIBLE_UPGRADE);
     }
   }
+  txn->UnlockTxn();
 }
 void LockManager::CheckSatisfyRowTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request,
                                                 LockMode row_lock_mode) {
-  std::unique_lock lock(txn->latch_);
+  txn->LockTxn();
   //     While upgrading, only the following transitions should be allowed:
   //  IS -> [S, X, IX, SIX]
   //  S -> [X, SIX]
@@ -378,13 +392,16 @@ void LockManager::CheckSatisfyRowTransitionCond(Transaction *txn, const std::sha
   if (request->lock_mode_ == LockMode::SHARED) {
     if (row_lock_mode != LockMode::EXCLUSIVE) {
       txn->SetState(TransactionState::ABORTED);
+      txn->UnlockTxn();
       throw TransactionAbortException(request->txn_id_, AbortReason::INCOMPATIBLE_UPGRADE);
     }
   } else if (request->lock_mode_ == LockMode::EXCLUSIVE) {
     // X wants to upgrade to X
     txn->SetState(TransactionState::ABORTED);
+    txn->UnlockTxn();
     throw TransactionAbortException(request->txn_id_, AbortReason::INCOMPATIBLE_UPGRADE);
   }
+  txn->UnlockTxn();
 }
 
 /// Check if there is any conflict 'mode' with some granted requests in the queue
@@ -392,10 +409,9 @@ void LockManager::CheckSatisfyRowTransitionCond(Transaction *txn, const std::sha
 /// \param mode
 /// \param oid
 /// \return true if no conflict, false otherwise.
-auto LockManager::LockIsFree(Transaction *txn, LockMode mode, const std::shared_ptr<LockRequestQueue>& table) -> bool {
+auto LockManager::LockIsFree(Transaction *txn, LockMode mode, const std::shared_ptr<LockRequestQueue> &table) -> bool {
   // stop other threads from running before the upgrade request
-  if (table->upgrading_ != INVALID_TXN_ID &&
-      txn->GetTransactionId() != table->upgrading_) {
+  if (table->upgrading_ != INVALID_TXN_ID && txn->GetTransactionId() != table->upgrading_) {
     return false;
   }
 
@@ -456,7 +472,7 @@ auto LockManager::NotConflictRowMode(const std::shared_ptr<LockRequest> &request
 
 // before attempting to acquire the lock, need to check abort conditions
 void LockManager::CheckAbortCond(Transaction *txn, const table_oid_t &oid, LockMode mode, bool is_lock_row) {
-  std::unique_lock lock(txn->latch_);
+  txn->LockTxn();
   //    *    Depending on the ISOLATION LEVEL, a transaction should attempt to take locks:
   //   *    - Only if required, AND
   //   *    - Only if allowed
@@ -487,15 +503,18 @@ void LockManager::CheckAbortCond(Transaction *txn, const table_oid_t &oid, LockM
     if (mode == LockMode::INTENTION_EXCLUSIVE || mode == LockMode::INTENTION_SHARED ||
         mode == LockMode::SHARED_INTENTION_EXCLUSIVE) {
       txn->SetState(TransactionState::ABORTED);
+      txn->UnlockTxn();
       throw TransactionAbortException(txn->GetTransactionId(), AbortReason::ATTEMPTED_INTENTION_LOCK_ON_ROW);
     }
     // X/IX locks on rows are not allowed if the Transaction State is SHRINKING
     if (txn->GetState() == TransactionState::SHRINKING && mode == LockMode::EXCLUSIVE) {
       txn->SetState(TransactionState::ABORTED);
+      txn->UnlockTxn();
       throw TransactionAbortException(txn->GetTransactionId(), AbortReason::LOCK_ON_SHRINKING);
     }
 
     CheckRowTableCompatible(txn, oid, mode);
+    txn->UnlockTxn();
     return;
   }
 
@@ -503,6 +522,7 @@ void LockManager::CheckAbortCond(Transaction *txn, const table_oid_t &oid, LockM
     case IsolationLevel::REPEATABLE_READ:
       if (txn->GetState() == TransactionState::SHRINKING) {
         txn->SetState(TransactionState::ABORTED);
+        txn->UnlockTxn();
         throw TransactionAbortException(txn->GetTransactionId(), AbortReason::LOCK_ON_SHRINKING);
       }
       break;
@@ -510,20 +530,24 @@ void LockManager::CheckAbortCond(Transaction *txn, const table_oid_t &oid, LockM
       if (txn->GetState() == TransactionState::SHRINKING && mode != LockMode::INTENTION_SHARED &&
           mode != LockMode::SHARED) {
         txn->SetState(TransactionState::ABORTED);
+        txn->UnlockTxn();
         throw TransactionAbortException(txn->GetTransactionId(), AbortReason::LOCK_ON_SHRINKING);
       }
       break;
     case IsolationLevel::READ_UNCOMMITTED:
       if (mode != LockMode::INTENTION_EXCLUSIVE && mode != LockMode::EXCLUSIVE) {
         txn->SetState(TransactionState::ABORTED);
+        txn->UnlockTxn();
         throw TransactionAbortException(txn->GetTransactionId(), AbortReason::LOCK_SHARED_ON_READ_UNCOMMITTED);
       }
       if (txn->GetState() != TransactionState::GROWING) {
         txn->SetState(TransactionState::ABORTED);
+        txn->UnlockTxn();
         throw TransactionAbortException(txn->GetTransactionId(), AbortReason::LOCK_SHARED_ON_READ_UNCOMMITTED);
       }
       break;
   }
+  txn->UnlockTxn();
 }
 /// Check weather the parent (the table) has been acquired accordingly
 /// \param txn
@@ -547,14 +571,8 @@ void LockManager::CheckRowTableCompatible(Transaction *txn, const table_oid_t &o
                                 });
   auto table_request = (*table_itr);
 
-  // S, IS, SIX for the parent
-  if (row_mode == LockMode::SHARED) {
-    if (table_request->lock_mode_ != LockMode::SHARED && table_request->lock_mode_ != LockMode::INTENTION_SHARED &&
-        table_request->lock_mode_ != LockMode::SHARED_INTENTION_EXCLUSIVE) {
-      txn->SetState(TransactionState::ABORTED);
-      throw TransactionAbortException(txn->GetTransactionId(), AbortReason::TABLE_LOCK_NOT_PRESENT);
-    }
-  } else if (row_mode == LockMode::EXCLUSIVE) {  // X, IX, SIX for the parent
+  // IS, S, IX, SIX for the parent
+  if (row_mode == LockMode::EXCLUSIVE) {  // X, IX, SIX for the parent
     if (table_request->lock_mode_ != LockMode::EXCLUSIVE &&
         table_request->lock_mode_ != LockMode::INTENTION_EXCLUSIVE &&
         table_request->lock_mode_ != LockMode::SHARED_INTENTION_EXCLUSIVE) {
@@ -564,8 +582,9 @@ void LockManager::CheckRowTableCompatible(Transaction *txn, const table_oid_t &o
   }
 }
 auto LockManager::IsHeldLockRow(Transaction *txn, LockMode row_lock_mode, const table_oid_t &oid, const RID &rid,
-                                std::unique_lock<std::mutex> &queue_lock, bool &is_abort) -> bool {
-  for (const auto &request : row_lock_map_[rid]->request_queue_) {
+                                const std::shared_ptr<LockRequestQueue> &row, std::unique_lock<std::mutex> &queue_lock,
+                                bool &is_abort) -> bool {
+  for (const auto &request : row->request_queue_) {
     if (request->txn_id_ == txn->GetTransactionId()) {
       // request the lock before
       if (!request->granted_) {
@@ -581,7 +600,7 @@ auto LockManager::IsHeldLockRow(Transaction *txn, LockMode row_lock_mode, const 
       }
       // otherwise, we want to upgrade the lock
       // multiple attempts to upgrade lock
-      if (row_lock_map_[rid]->upgrading_ != INVALID_TXN_ID) {
+      if (row->upgrading_ != INVALID_TXN_ID) {
         txn->LockTxn();
         txn->SetState(TransactionState::ABORTED);
         txn->UnlockTxn();
@@ -590,24 +609,24 @@ auto LockManager::IsHeldLockRow(Transaction *txn, LockMode row_lock_mode, const 
       // check abort conditions
       CheckSatisfyRowTransitionCond(txn, request, row_lock_mode);
       // drop the current lock
-      row_lock_map_[rid]->request_queue_.remove(request);
+      row->request_queue_.remove(request);
       // drop the lock from the txn
       TxnRemoveRowLock(txn, oid, rid, row_lock_mode);
 
       auto row_upgrade_req = std::make_shared<LockRequest>(txn->GetTransactionId(), row_lock_mode, oid, rid);
       // reserve the upgrade position
-      row_lock_map_[rid]->request_queue_.push_back(row_upgrade_req);
+      row->request_queue_.push_back(row_upgrade_req);
       // set the upgrading
-      row_lock_map_[rid]->upgrading_ = txn->GetTransactionId();
+      row->upgrading_ = txn->GetTransactionId();
       // wait to get new lock granted
       while (!RowLockIsFree(txn, row_lock_mode, oid, rid)) {
-        row_lock_map_[rid]->cv_.wait(queue_lock);
+        row->cv_.wait(queue_lock);
         // if the txt was aborted, take action
         if (txn->GetState() == TransactionState::ABORTED) {
-          row_lock_map_[rid]->request_queue_.remove(row_upgrade_req);
+          row->request_queue_.remove(row_upgrade_req);
           is_abort = true;
-          row_lock_map_[rid]->upgrading_ = INVALID_TXN_ID;
-          row_lock_map_[rid]->cv_.notify_all();
+          row->upgrading_ = INVALID_TXN_ID;
+          row->cv_.notify_all();
           return false;
         }
       }
@@ -615,7 +634,7 @@ auto LockManager::IsHeldLockRow(Transaction *txn, LockMode row_lock_mode, const 
       // set the lock to be granted
       row_upgrade_req->granted_ = true;
       // clear the upgrade_req
-      row_lock_map_[rid]->upgrading_ = INVALID_TXN_ID;
+      row->upgrading_ = INVALID_TXN_ID;
       // add the granted lock to the txn
       TxnAddRowLock(txn, row_lock_mode, oid, rid);
       return true;
@@ -626,7 +645,11 @@ auto LockManager::IsHeldLockRow(Transaction *txn, LockMode row_lock_mode, const 
 }
 
 void LockManager::SetTxnState(Transaction *txn, LockMode mode) {
-  std::unique_lock<std::mutex> k(txn->latch_);
+  if (txn->GetState() == TransactionState::COMMITTED || txn->GetState() == TransactionState::ABORTED ||
+      (mode != LockMode::SHARED && mode != LockMode::EXCLUSIVE)) {
+    return;
+  }
+  txn->LockTxn();
   //    * TRANSACTION STATE UPDATE
   //   *    Unlock should update the transaction state appropriately (depending upon the ISOLATION LEVEL)
   //   *    Only unlocking S or X locks changes transaction state.
@@ -643,17 +666,20 @@ void LockManager::SetTxnState(Transaction *txn, LockMode mode) {
   //   *        S locks are not permitted under READ_UNCOMMITTED.
   //   *            The behaviour upon unlocking an S lock under this isolation level is undefined.
 
-  auto state = txn->GetIsolationLevel();
-  if (state == IsolationLevel::REPEATABLE_READ) {
+  auto iso_level = txn->GetIsolationLevel();
+
+  if (iso_level == IsolationLevel::REPEATABLE_READ && (mode == LockMode::SHARED || mode == LockMode::EXCLUSIVE)) {
     txn->SetState(TransactionState::SHRINKING);
-  } else if (state == IsolationLevel::READ_COMMITTED || state == IsolationLevel::READ_UNCOMMITTED) {
+  } else if (iso_level == IsolationLevel::READ_COMMITTED || iso_level == IsolationLevel::READ_UNCOMMITTED) {
     if (mode == LockMode::EXCLUSIVE) {
       txn->SetState(TransactionState::SHRINKING);
     }
   }
+  txn->UnlockTxn();
 }
 
 void LockManager::CheckTableUnlockAbortCond(Transaction *txn, const table_oid_t &oid,
+                                            const std::shared_ptr<LockRequestQueue> &table,
                                             std::list<std::shared_ptr<LockRequest>>::iterator &table_iterator) {
   //    * GENERAL BEHAVIOUR:
   //   *    Both UnlockTable() and UnlockRow() should release the lock on the resource and return.
@@ -667,18 +693,17 @@ void LockManager::CheckTableUnlockAbortCond(Transaction *txn, const table_oid_t 
   //   *    as ABORTED and throw a TransactionAbortException (TABLE_UNLOCKED_BEFORE_UNLOCKING_ROWS).
   //   *
   //   *    Finally, unlocking a resource should also grant any new lock requests for the resource (if possible).
-  std::unique_lock<std::mutex> l(table_lock_map_[oid]->latch_);
-  std::unique_lock<std::mutex> k(txn->latch_);
-
-  auto table = table_lock_map_[oid];
   // lookup the table lock
   auto table_itr = std::find_if(table->request_queue_.begin(), table->request_queue_.end(),
                                 [txn](const std::shared_ptr<LockRequest> &request) {
                                   return request->txn_id_ == txn->GetTransactionId() && request->granted_;
                                 });
+  // acquire the lock on txn
+  txn->LockTxn();
   // not found
   if (table_itr == table->request_queue_.end()) {
     txn->SetState(TransactionState::ABORTED);
+    txn->UnlockTxn();
     throw TransactionAbortException(txn->GetTransactionId(), AbortReason::ATTEMPTED_UNLOCK_BUT_NO_LOCK_HELD);
   }
   // return the table_lock iterator
@@ -686,8 +711,10 @@ void LockManager::CheckTableUnlockAbortCond(Transaction *txn, const table_oid_t 
   // check if the txn hold any lock on row level
   if (IsTxnHoldRowLock(txn, oid)) {
     txn->SetState(TransactionState::ABORTED);
+    txn->UnlockTxn();
     throw TransactionAbortException(txn->GetTransactionId(), AbortReason::TABLE_UNLOCKED_BEFORE_UNLOCKING_ROWS);
   }
+  txn->UnlockTxn();
 }
 auto LockManager::IsTxnHoldRowLock(Transaction *txn, const table_oid_t &oid) const -> bool {
   bool has_shared = false;

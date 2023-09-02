@@ -299,24 +299,28 @@ class LockManager {
 
   static void TxnAddTableLock(Transaction *p_transaction, const table_oid_t &oid, LockMode mode);
   static void TxnAddRowLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid, const RID &rid);
-  auto LockIsFree(Transaction *txn, LockMode mode, const std::shared_ptr<LockRequestQueue>& table) -> bool;
+  auto LockIsFree(Transaction *txn, LockMode mode, const std::shared_ptr<LockRequestQueue> &table) -> bool;
   auto IsHeldLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid,
-                  std::unique_lock<std::mutex> &queue_lock, bool &is_abort) -> bool;
-  void CheckSatisfyTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request, LockMode lock_mode);
+                  std::shared_ptr<LockRequestQueue> &table, std::unique_lock<std::mutex> &queue_lock, bool &is_abort)
+      -> bool;
+  void CheckSatisfyTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request,
+                                  LockMode upgrade_lock_mode);
   void CheckSatisfyRowTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request,
-                                     LockManager::LockMode upgrade_lock_mode);
+                                     LockMode row_lock_mode);
   static auto NotConflictMode(const std::shared_ptr<LockRequest> &request, LockMode mode, Transaction *txn) -> bool;
   void CheckAbortCond(Transaction *txn, const table_oid_t &oid, LockMode mode, bool is_lock_row = false);
   void CheckRowTableCompatible(Transaction *txn, const table_oid_t &oid, LockMode row_mode);
   auto IsHeldLockRow(Transaction *txn, LockMode row_lock_mode, const table_oid_t &oid, const RID &rid,
-                     std::unique_lock<std::mutex> &queue_lock, bool &is_abort) -> bool;
+                     const std::shared_ptr<LockRequestQueue> &row, std::unique_lock<std::mutex> &queue_lock,
+                     bool &is_abort) -> bool;
   auto RowLockIsFree(Transaction *txn, LockMode mode, const table_oid_t &oid, const RID &rid) -> bool;
   auto static NotConflictRowMode(const std::shared_ptr<LockRequest> &request, LockMode mode, Transaction *txn) -> bool;
   void CheckTableUnlockAbortCond(Transaction *txn, const table_oid_t &oid,
+                                 const std::shared_ptr<LockRequestQueue>& table,
                                  std::list<std::shared_ptr<LockRequest>>::iterator &table_iterator);
-  void CheckRowUnlockAbortCond(Transaction *txn, const table_oid_t &oid, const RID &rid,
-                                            std::list<std::shared_ptr<LockRequest>>::iterator &row_iterator);
-  auto IsTxnHoldRowLock(Transaction *p_transaction, const table_oid_t &oid) const -> bool;
+  void CheckRowUnlockAbortCond(Transaction *txn, const std::shared_ptr<LockRequestQueue>& table,
+                               std::list<std::shared_ptr<LockRequest>>::iterator &row_iterator);
+  auto IsTxnHoldRowLock(Transaction *txn, const table_oid_t &oid) const -> bool;
   static void SetTxnState(Transaction *txn, LockMode mode);
 
  private:

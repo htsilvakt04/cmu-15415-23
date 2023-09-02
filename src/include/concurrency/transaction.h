@@ -324,6 +324,7 @@ class Transaction {
   inline void SetPrevLSN(lsn_t prev_lsn) { prev_lsn_ = prev_lsn; }
 
   std::mutex latch_;
+
  private:
   /** The current transaction state. */
   TransactionState state_{TransactionState::GROWING};
