@@ -301,17 +301,17 @@ class LockManager {
   static void TxnAddRowLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid, const RID &rid);
   auto LockIsFree(Transaction *txn, LockMode mode, const std::shared_ptr<LockRequestQueue> &table) -> bool;
   auto IsHeldLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid,
-                  std::shared_ptr<LockRequestQueue> &table, std::unique_lock<std::mutex> &queue_lock, bool &is_abort)
+                  std::shared_ptr<LockRequestQueue> &table, std::mutex &queue_lock, bool &is_abort)
       -> bool;
   void CheckSatisfyTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request,
-                                  LockMode upgrade_lock_mode);
+                                  LockMode upgrade_lock_mode, std::mutex &queue_lock);
   void CheckSatisfyRowTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request,
-                                     LockMode row_lock_mode);
+                                     LockMode row_lock_mode, std::mutex &queue_lock);
   static auto NotConflictMode(const std::shared_ptr<LockRequest> &request, LockMode mode, Transaction *txn) -> bool;
   void CheckAbortCond(Transaction *txn, const table_oid_t &oid, LockMode mode, bool is_lock_row = false);
   void CheckRowTableCompatible(Transaction *txn, const table_oid_t &oid, LockMode row_mode);
   auto IsHeldLockRow(Transaction *txn, LockMode row_lock_mode, const table_oid_t &oid, const RID &rid,
-                     const std::shared_ptr<LockRequestQueue> &row, std::unique_lock<std::mutex> &queue_lock,
+                     const std::shared_ptr<LockRequestQueue> &row, std::mutex &queue_lock,
                      bool &is_abort) -> bool;
   auto RowLockIsFree(Transaction *txn, LockMode mode, const table_oid_t &oid, const RID &rid) -> bool;
   auto static NotConflictRowMode(const std::shared_ptr<LockRequest> &request, LockMode mode, Transaction *txn) -> bool;
@@ -322,7 +322,10 @@ class LockManager {
                                std::list<std::shared_ptr<LockRequest>>::iterator &row_iterator);
   auto IsTxnHoldRowLock(Transaction *txn, const table_oid_t &oid) const -> bool;
   static void SetTxnState(Transaction *txn, LockMode mode);
-
+  auto InsertOrDeleteTableLockSet(Transaction *txn, const std::shared_ptr<LockRequest> &lock_request, bool insert)
+      -> void;
+  auto GrantLock(const std::shared_ptr<LockRequest> &lock_request,
+                 const std::shared_ptr<LockRequestQueue> &lock_request_queue) -> bool;
  private:
   /** Fall 2022 */
   /** Structure that holds lock requests for a given table oid */

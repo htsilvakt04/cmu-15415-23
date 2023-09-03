@@ -109,8 +109,6 @@ void TableLockTest1() {
     delete txns[i];
   }
 }
-TEST(LockManagerTest, TableLockTest1) { TableLockTest1(); }  // NOLINT
-
 /** Upgrading single transaction from S -> X */
 void TableLockUpgradeTest1() {
   LockManager lock_mgr{};
@@ -132,8 +130,6 @@ void TableLockUpgradeTest1() {
 
   delete txn1;
 }
-TEST(LockManagerTest, TableLockUpgradeTest1) { TableLockUpgradeTest1(); }  // NOLINT
-
 void RowLockTest1() {
   LockManager lock_mgr{};
   TransactionManager txn_mgr{&lock_mgr};
@@ -188,8 +184,6 @@ void RowLockTest1() {
     delete txns[i];
   }
 }
-TEST(LockManagerTest, RowLockTest1) { RowLockTest1(); }  // NOLINT
-
 void TwoPLTest1() {
   LockManager lock_mgr{};
   TransactionManager txn_mgr{&lock_mgr};
@@ -235,7 +229,9 @@ void TwoPLTest1() {
   CheckTableLockSizes(txn, 0, 0, 0, 0, 0);
   delete txn;
 }
-
+TEST(LockManagerTest, TableLockTest1) { TableLockTest1(); }  // NOLINT
+TEST(LockManagerTest, TableLockUpgradeTest1) { TableLockUpgradeTest1(); }  // NOLINT
+TEST(LockManagerTest, RowLockTest1) { RowLockTest1(); }  // NOLINT
 TEST(LockManagerTest, TwoPLTest1) { TwoPLTest1(); }  // NOLINT
 
 }  // namespace bustub
