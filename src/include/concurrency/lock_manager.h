@@ -311,8 +311,7 @@ class LockManager {
   void CheckAbortCond(Transaction *txn, const table_oid_t &oid, LockMode mode, bool is_lock_row = false);
   void CheckRowTableCompatible(Transaction *txn, const table_oid_t &oid, LockMode row_mode);
   auto IsHeldLockRow(Transaction *txn, LockMode row_lock_mode, const table_oid_t &oid, const RID &rid,
-                     const std::shared_ptr<LockRequestQueue> &row, std::mutex &queue_lock,
-                     bool &is_abort) -> bool;
+                     const std::shared_ptr<LockRequestQueue> &row, bool &is_abort) -> bool;
   auto RowLockIsFree(Transaction *txn, LockMode mode, const table_oid_t &oid, const RID &rid) -> bool;
   auto static NotConflictRowMode(const std::shared_ptr<LockRequest> &request, LockMode mode, Transaction *txn) -> bool;
   void CheckTableUnlockAbortCond(Transaction *txn, const table_oid_t &oid,
