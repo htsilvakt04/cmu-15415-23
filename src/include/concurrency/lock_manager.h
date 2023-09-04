@@ -312,7 +312,6 @@ class LockManager {
   void CheckRowTableCompatible(Transaction *txn, const table_oid_t &oid, LockMode row_mode);
   auto IsHeldLockRow(Transaction *txn, LockMode row_lock_mode, const table_oid_t &oid, const RID &rid,
                      const std::shared_ptr<LockRequestQueue> &row, bool &is_abort) -> bool;
-  auto RowLockIsFree(Transaction *txn, LockMode mode, const table_oid_t &oid, const RID &rid) -> bool;
   auto static NotConflictRowMode(const std::shared_ptr<LockRequest> &request, LockMode mode, Transaction *txn) -> bool;
   void CheckTableUnlockAbortCond(Transaction *txn, const table_oid_t &oid,
                                  const std::shared_ptr<LockRequestQueue>& table,
@@ -321,10 +320,7 @@ class LockManager {
                                std::list<std::shared_ptr<LockRequest>>::iterator &row_iterator);
   auto IsTxnHoldRowLock(Transaction *txn, const table_oid_t &oid) const -> bool;
   static void SetTxnState(Transaction *txn, LockMode mode);
-  auto InsertOrDeleteTableLockSet(Transaction *txn, const std::shared_ptr<LockRequest> &lock_request, bool insert)
-      -> void;
-  auto GrantLock(const std::shared_ptr<LockRequest> &lock_request,
-                 const std::shared_ptr<LockRequestQueue> &lock_request_queue) -> bool;
+  auto RowLockIsFree(Transaction *txn, LockMode mode, const std::shared_ptr<LockRequestQueue> &table) -> bool;
  private:
   /** Fall 2022 */
   /** Structure that holds lock requests for a given table oid */
