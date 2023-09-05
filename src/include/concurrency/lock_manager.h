@@ -17,6 +17,8 @@
 #include <list>
 #include <memory>
 #include <mutex>  // NOLINT
+#include <set>
+#include <stack>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -36,6 +38,102 @@ class TransactionManager;
 class LockManager {
  public:
   enum class LockMode { SHARED, EXCLUSIVE, INTENTION_SHARED, INTENTION_EXCLUSIVE, SHARED_INTENTION_EXCLUSIVE };
+
+
+  class DirectedCycle {
+   public:
+    explicit DirectedCycle(std::unordered_map<txn_id_t, std::vector<txn_id_t>> *waits_for)
+        : waits_for_graph_(waits_for){};
+
+    void BreakCycle(Transaction * txn) {
+      auto id = txn->GetTransactionId();
+      // set txn state to abort
+      txn->SetState(TransactionState::ABORTED);
+      txn_id_t to = edge_to_[id];
+      // remove the edge that creates the cycle
+      waits_for_graph_[id].erase(to);
+    }
+
+    bool HasCycle(const std::vector<txn_id_t> &vector, txn_id_t *txn_id) {
+      // reset the cycle
+      cycle_.clear();
+
+      // do the search
+      for (const auto &tran_id : vector) {
+        // not yet marked and there is no cycle
+        if (marked_.count(tran_id) == 0) {
+          Dfs(tran_id);
+        }
+      }
+
+      // return result
+      if(!cycle_.empty()) {
+        txn_id_t min = cycle_[0];
+        for(const auto& tran_id : cycle_) {
+          if (tran_id < min) {
+            min = tran_id;
+          }
+        }
+        // set the txn_id to the lowest
+        *txn_id = min;
+      }
+
+      return !cycle_.empty();
+    }
+
+   private:
+    void Dfs(txn_id_t v) {
+      on_stack_.insert(v);
+      marked_.insert(v);
+      for (const auto& w : waits_for_graph_->find(v)->second) {
+        // short circuit if directed cycle found
+        if (!cycle_.empty()) {
+          return;
+        }
+        // found new vertex, so recur
+        if (marked_.count(w) == 0) {
+          edge_to_.emplace(w, v);
+          Dfs(w);
+        }
+        // trace back directed cycle
+        else if (on_stack_.count(w) == 1) {
+          for (int x = v; x != w; x = edge_to_[x]) {
+            cycle_.push_back(x);
+          }
+          cycle_.push_back(w);
+          cycle_.push_back(v);
+        }
+      } // end for
+
+      // uncheck
+      on_stack_.erase(v);
+    } // end Dfs
+
+    // keeps track of which vertex has been processed.
+    std::set<txn_id_t> marked_;
+    // edge_to[v] = w means v comes to w.
+    std::unordered_map<txn_id_t, txn_id_t> edge_to_;
+    // keeps track of which vertices the search path have gone through
+    std::set<txn_id_t> on_stack_;
+    // Directed cycle (Null if no such cycle)
+    std::vector<txn_id_t> cycle_;
+    
+    std::unordered_map<txn_id_t, std::vector<txn_id_t>> *waits_for_graph_;
+  };
+
+  /**
+   * Creates a new lock manager configured for the deadlock detection policy.
+   */
+  LockManager() {
+    enable_cycle_detection_ = true;
+    cycle_detection_thread_ = new std::thread(&LockManager::RunCycleDetection, this);
+  }
+
+  ~LockManager() {
+    enable_cycle_detection_ = false;
+    cycle_detection_thread_->join();
+    delete cycle_detection_thread_;
+  }
 
   /**
    * Structure to hold a lock request.
@@ -72,20 +170,6 @@ class LockManager {
     /** coordination */
     std::mutex latch_;
   };
-
-  /**
-   * Creates a new lock manager configured for the deadlock detection policy.
-   */
-  LockManager() {
-    enable_cycle_detection_ = true;
-    cycle_detection_thread_ = new std::thread(&LockManager::RunCycleDetection, this);
-  }
-
-  ~LockManager() {
-    enable_cycle_detection_ = false;
-    cycle_detection_thread_->join();
-    delete cycle_detection_thread_;
-  }
 
   /**
    * [LOCK_NOTE]
@@ -301,8 +385,7 @@ class LockManager {
   static void TxnAddRowLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid, const RID &rid);
   auto LockIsFree(Transaction *txn, LockMode mode, const std::shared_ptr<LockRequestQueue> &table) -> bool;
   auto IsHeldLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid,
-                  std::shared_ptr<LockRequestQueue> &table, std::mutex &queue_lock, bool &is_abort)
-      -> bool;
+                  std::shared_ptr<LockRequestQueue> &table, std::mutex &queue_lock, bool &is_abort) -> bool;
   void CheckSatisfyTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request,
                                   LockMode upgrade_lock_mode, std::mutex &queue_lock);
   void CheckSatisfyRowTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request,
@@ -314,13 +397,14 @@ class LockManager {
                      const std::shared_ptr<LockRequestQueue> &row, bool &is_abort) -> bool;
   auto static NotConflictRowMode(const std::shared_ptr<LockRequest> &request, LockMode mode, Transaction *txn) -> bool;
   void CheckTableUnlockAbortCond(Transaction *txn, const table_oid_t &oid,
-                                 const std::shared_ptr<LockRequestQueue>& table,
+                                 const std::shared_ptr<LockRequestQueue> &table,
                                  std::list<std::shared_ptr<LockRequest>>::iterator &table_iterator);
-  void CheckRowUnlockAbortCond(Transaction *txn, const std::shared_ptr<LockRequestQueue>& table,
+  void CheckRowUnlockAbortCond(Transaction *txn, const std::shared_ptr<LockRequestQueue> &table,
                                std::list<std::shared_ptr<LockRequest>>::iterator &row_iterator);
   auto IsTxnHoldRowLock(Transaction *txn, const table_oid_t &oid) const -> bool;
   static void SetTxnState(Transaction *txn, LockMode mode);
   auto RowLockIsFree(Transaction *txn, LockMode mode, const std::shared_ptr<LockRequestQueue> &table) -> bool;
+
  private:
   /** Fall 2022 */
   /** Structure that holds lock requests for a given table oid */
@@ -338,6 +422,10 @@ class LockManager {
   /** Waits-for graph representation. */
   std::unordered_map<txn_id_t, std::vector<txn_id_t>> waits_for_;
   std::mutex waits_for_latch_;
+  std::unique_ptr<DirectedCycle> directed_cycle_{nullptr};
+  void BuildGraph();
+  void ProcessTableResources();
+  void ProcessRowResources();
 };
 
 }  // namespace bustub
