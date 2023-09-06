@@ -231,6 +231,55 @@ void LockManager::RemoveEdge(txn_id_t t1, txn_id_t t2) {
   }
 }
 
+void LockManager::BreakCycle(Transaction * txn) {
+  auto id = txn->GetTransactionId();
+  // set txn state to abort
+  txn->SetState(TransactionState::ABORTED);
+  // remove all the edges from this node
+  waits_for_.erase(id);
+  // remove all the edges that linked to this node
+  for (auto& pair : waits_for_) {
+    std::vector<txn_id_t>& vector = pair.second;
+    auto it = vector.begin();
+
+    while (it != vector.end()) {
+      if (*it == id) {
+        // Remove the element from the vector
+        it = vector.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+}
+
+void LockManager::Dfs(txn_id_t v) {
+  on_stack_.insert(v);
+  marked_.insert(v);
+  if(waits_for_.find(v) != waits_for_.end()) {
+    for (const auto& w : waits_for_.find(v)->second) {
+      // short circuit if directed cycle found
+      if (!cycle_.empty()) {
+        return;
+      }
+      // found new vertex, so recur
+      if (marked_.count(w) == 0) {
+        edge_to_.emplace(w, v);
+        Dfs(w);
+      }
+      // trace back directed cycle
+      else if (on_stack_.count(w) == 1) {
+        for (int x = v; x != w; x = edge_to_[x]) {
+          cycle_.push_back(x);
+        }
+        cycle_.push_back(w);
+        cycle_.push_back(v);
+      }
+    } // end for
+  }
+  // uncheck
+  on_stack_.erase(v);
+}
 /// Princeton BFS for cycle detection
 /// \param txn_id the lowest txn_id in the cycle
 /// \return true if has cycle, false otherwise.
@@ -241,13 +290,36 @@ auto LockManager::HasCycle(txn_id_t *txn_id) -> bool {
   for (const auto& entry : waits_for_) {
     sorted_keys.push_back(entry.first);
   }
+  std::sort(sorted_keys.begin(), sorted_keys.end());
+
   // reset the cycle
-  (*directed_cycle_).cycle_.clear();
-  (*directed_cycle_).marked_.clear();
-  (*directed_cycle_).edge_to_.clear();
-  (*directed_cycle_).on_stack_.clear();
+  cycle_.clear();
+  marked_.clear();
+  edge_to_.clear();
+  on_stack_.clear();
+
   // do the algorithms
-  return (*directed_cycle_).HasCycle(sorted_keys, txn_id);
+  // do the search
+  for (const auto &tran_id : sorted_keys) {
+    // not yet marked
+    if (marked_.count(tran_id) == 0) {
+      Dfs(tran_id);
+    }
+  }
+
+  // return result
+  if(!cycle_.empty()) {
+    txn_id_t max = cycle_[0];
+    for(const auto& tran_id : cycle_) {
+      if (tran_id > max) {
+        max = tran_id;
+      }
+    }
+    // set the txn_id to the lowest
+    *txn_id = max;
+  }
+
+  return !cycle_.empty();
 }
 
 auto LockManager::GetEdgeList() -> std::vector<std::pair<txn_id_t, txn_id_t>> {
@@ -259,6 +331,20 @@ auto LockManager::GetEdgeList() -> std::vector<std::pair<txn_id_t, txn_id_t>> {
   }
   return edges;
 }
+void LockManager::WakeUp(txn_id_t id) {
+  if (waits_for_table_.count(id) > 0) {
+    table_lock_map_latch_.lock();
+    table_lock_map_[waits_for_table_[id]]->cv_.notify_all();
+    table_lock_map_latch_.unlock();
+    waits_for_table_.erase(id);
+  }
+  if (waits_for_row_.count(id) > 0) {
+    row_lock_map_latch_.lock();
+    row_lock_map_[waits_for_row_[id]]->cv_.notify_all();
+    row_lock_map_latch_.unlock();
+    waits_for_row_.erase(id);
+  }
+}
 
 void LockManager::RunCycleDetection() {
   while (enable_cycle_detection_) {
@@ -266,31 +352,18 @@ void LockManager::RunCycleDetection() {
     {
       waits_for_latch_.lock();
       // step 1: Build the Digraph
-      directed_cycle_ = std::make_unique<DirectedCycle>(&this->waits_for_);
       BuildGraph();
       // step 2: Run the cycle detection algorithms on the graph
       txn_id_t id;
       while (HasCycle(&id)) {
         auto txn = TransactionManager::GetTransaction(id);
-        (*directed_cycle_).BreakCycle(txn);
+        BreakCycle(txn);
         // wake it up
-        if (waits_for_table_.count(id) > 0) {
-          table_lock_map_latch_.lock();
-          table_lock_map_[waits_for_table_[id]]->cv_.notify_all();
-          table_lock_map_latch_.unlock();
-          waits_for_table_.erase(id);
-        }
-
-        if (waits_for_row_.count(id) > 0) {
-          row_lock_map_latch_.lock();
-          row_lock_map_[waits_for_row_[id]]->cv_.notify_all();
-          row_lock_map_latch_.unlock();
-          waits_for_row_.erase(id);
-        }
+        WakeUp(id);
       } // end while
+
       // reset the graph
       waits_for_.clear();
-      directed_cycle_ = nullptr;
       waits_for_table_.clear();
       waits_for_row_.clear();
       waits_for_latch_.unlock();
@@ -320,11 +393,6 @@ void LockManager::ProcessTableResources() {
     // Add elements in a sorted order
     for(const auto& request : queue->request_queue_) {
       auto tran_id = request->txn_id_;
-//      auto txn = TransactionManager::GetTransaction(tran_id);
-      // ignore aborted txns
-//      if(txn == nullptr || txn->GetState() == TransactionState::ABORTED) {
-//        continue;
-//      }
       if(request->granted_) {
         granted.insert(std::lower_bound(granted.begin(), granted.end(), tran_id), tran_id);
       }
@@ -360,11 +428,6 @@ void LockManager::ProcessRowResources() {
     // Add elements in a sorted order
     for(const auto& request : queue->request_queue_) {
       auto tran_id = request->txn_id_;
-//      auto txn = TransactionManager::GetTransaction(tran_id);
-//      // ignore aborted txns
-//      if(txn == nullptr || txn->GetState() == TransactionState::ABORTED) {
-//        continue;
-//      }
       if(request->granted_) {
         granted.insert(std::lower_bound(granted.begin(), granted.end(), tran_id), tran_id);
       }
