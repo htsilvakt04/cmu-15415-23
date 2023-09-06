@@ -241,13 +241,22 @@ auto LockManager::HasCycle(txn_id_t *txn_id) -> bool {
   for (const auto& entry : waits_for_) {
     sorted_keys.push_back(entry.first);
   }
-
+  // reset the cycle
+  (*directed_cycle_).cycle_.clear();
+  (*directed_cycle_).marked_.clear();
+  (*directed_cycle_).edge_to_.clear();
+  (*directed_cycle_).on_stack_.clear();
   // do the algorithms
   return (*directed_cycle_).HasCycle(sorted_keys, txn_id);
 }
 
 auto LockManager::GetEdgeList() -> std::vector<std::pair<txn_id_t, txn_id_t>> {
-  std::vector<std::pair<txn_id_t, txn_id_t>> edges(0);
+  std::vector<std::pair<txn_id_t, txn_id_t>> edges;
+  for(const auto& [tran_id, second] : waits_for_) {
+    for(const auto& wait_id : waits_for_[tran_id]) {
+      edges.emplace_back(tran_id, wait_id);
+    }
+  }
   return edges;
 }
 
@@ -257,69 +266,83 @@ void LockManager::RunCycleDetection() {
     {
       waits_for_latch_.lock();
       // step 1: Build the Digraph
-      // [can iterate BuildGraph() into DirectedCycle]
-      BuildGraph();
       directed_cycle_ = std::make_unique<DirectedCycle>(&this->waits_for_);
+      BuildGraph();
       // step 2: Run the cycle detection algorithms on the graph
       txn_id_t id;
       while (HasCycle(&id)) {
         auto txn = TransactionManager::GetTransaction(id);
         (*directed_cycle_).BreakCycle(txn);
         // wake it up
-        txn->GetThreadId();
-      }
+        if (waits_for_table_.count(id) > 0) {
+          table_lock_map_latch_.lock();
+          table_lock_map_[waits_for_table_[id]]->cv_.notify_all();
+          table_lock_map_latch_.unlock();
+          waits_for_table_.erase(id);
+        }
 
+        if (waits_for_row_.count(id) > 0) {
+          row_lock_map_latch_.lock();
+          row_lock_map_[waits_for_row_[id]]->cv_.notify_all();
+          row_lock_map_latch_.unlock();
+          waits_for_row_.erase(id);
+        }
+      } // end while
       // reset the graph
       waits_for_.clear();
       directed_cycle_ = nullptr;
+      waits_for_table_.clear();
+      waits_for_row_.clear();
       waits_for_latch_.unlock();
     }
   }
 }
 
 void LockManager::BuildGraph() {
+  table_lock_map_latch_.lock();
   ProcessTableResources();
+  table_lock_map_latch_.unlock();
+  row_lock_map_latch_.lock();
   ProcessRowResources();
+  row_lock_map_latch_.unlock();
 }
 void LockManager::ProcessTableResources() {
   // [exclude ABORTED txns]
   auto iter = table_lock_map_.begin();
   // for each table oid, build corresponding edges
   while (iter != table_lock_map_.end()) {
-    table_lock_map_latch_.lock();
     auto queue = iter->second;
+    auto table_oid = iter->first;
     queue->latch_.lock();
-    table_lock_map_latch_.unlock();
     // list of granted/waiting lock request
     std::vector<txn_id_t> granted;
     std::vector<txn_id_t> waiting;
-
     // Add elements in a sorted order
     for(const auto& request : queue->request_queue_) {
       auto tran_id = request->txn_id_;
-      auto txn = TransactionManager::GetTransaction(tran_id);
+//      auto txn = TransactionManager::GetTransaction(tran_id);
       // ignore aborted txns
-      if(txn->GetState() == TransactionState::ABORTED) {
-        continue;
-      }
+//      if(txn == nullptr || txn->GetState() == TransactionState::ABORTED) {
+//        continue;
+//      }
       if(request->granted_) {
         granted.insert(std::lower_bound(granted.begin(), granted.end(), tran_id), tran_id);
       }
       else {
-        waiting.insert(std::lower_bound(granted.begin(), granted.end(), tran_id), tran_id);
+        waiting.insert(std::lower_bound(waiting.begin(), waiting.end(), tran_id), tran_id);
       }
     } // end for
-
     // release the lock
     queue->latch_.unlock();
     // add edges
-    waits_for_latch_.lock();
     for(const auto& txn_id : waiting) {
       for(const auto& granted_txn_id : granted) {
         AddEdge(txn_id, granted_txn_id);
+        waits_for_table_[txn_id] = table_oid;
       }
     }
-    waits_for_latch_.unlock();
+    // advance
+    ++iter;
   } // end while
 }
 
@@ -327,10 +350,9 @@ void LockManager::ProcessRowResources() {
   auto iter = row_lock_map_.begin();
   // for each table oid, build corresponding edges
   while (iter != row_lock_map_.end()) {
-    row_lock_map_latch_.lock();
+    auto rid = iter->first;
     auto queue = iter->second;
     queue->latch_.lock();
-    row_lock_map_latch_.unlock();
     // list of granted/waiting lock request
     std::vector<txn_id_t> granted;
     std::vector<txn_id_t> waiting;
@@ -338,29 +360,30 @@ void LockManager::ProcessRowResources() {
     // Add elements in a sorted order
     for(const auto& request : queue->request_queue_) {
       auto tran_id = request->txn_id_;
-      auto txn = TransactionManager::GetTransaction(tran_id);
-      // ignore aborted txns
-      if(txn->GetState() == TransactionState::ABORTED) {
-        continue;
-      }
+//      auto txn = TransactionManager::GetTransaction(tran_id);
+//      // ignore aborted txns
+//      if(txn == nullptr || txn->GetState() == TransactionState::ABORTED) {
+//        continue;
+//      }
       if(request->granted_) {
         granted.insert(std::lower_bound(granted.begin(), granted.end(), tran_id), tran_id);
       }
       else {
-        waiting.insert(std::lower_bound(granted.begin(), granted.end(), tran_id), tran_id);
+        waiting.insert(std::lower_bound(waiting.begin(), waiting.end(), tran_id), tran_id);
       }
     } // end for
 
     // release the lock
     queue->latch_.unlock();
     // add edges
-    waits_for_latch_.lock();
     for(const auto& txn_id : waiting) {
       for(const auto& granted_txn_id : granted) {
         AddEdge(txn_id, granted_txn_id);
+        waits_for_row_[txn_id] = rid;
       }
     }
-    waits_for_latch_.unlock();
+    // advance
+    ++iter;
   } // end while
 }
 
@@ -690,8 +713,9 @@ void LockManager::CheckAbortCond(Transaction *txn, const table_oid_t &oid, LockM
       }
       break;
     case IsolationLevel::READ_COMMITTED:
-      if (txn->GetState() == TransactionState::SHRINKING && mode != LockMode::INTENTION_SHARED &&
-          mode != LockMode::SHARED) {
+      if (txn->GetState() == TransactionState::SHRINKING
+          && mode != LockMode::INTENTION_SHARED
+          && mode != LockMode::SHARED) {
         txn->SetState(TransactionState::ABORTED);
         txn->UnlockTxn();
         throw TransactionAbortException(txn->GetTransactionId(), AbortReason::LOCK_ON_SHRINKING);
@@ -723,8 +747,9 @@ void LockManager::CheckRowTableCompatible(Transaction *txn, const table_oid_t &o
   txn->LockTxn();
   // IS, S, IX, SIX for the parent
   if (row_mode == LockMode::EXCLUSIVE) {  // X, IX, SIX for the parent
-    if (!txn->IsTableExclusiveLocked(oid) && !txn->IsTableIntentionExclusiveLocked(oid) &&
-        !txn->IsTableSharedIntentionExclusiveLocked(oid)) {
+    if (!txn->IsTableExclusiveLocked(oid)
+        && !txn->IsTableIntentionExclusiveLocked(oid)
+        && !txn->IsTableSharedIntentionExclusiveLocked(oid)) {
       txn->SetState(TransactionState::ABORTED);
       txn->UnlockTxn();
       throw TransactionAbortException(txn->GetTransactionId(), AbortReason::TABLE_LOCK_NOT_PRESENT);

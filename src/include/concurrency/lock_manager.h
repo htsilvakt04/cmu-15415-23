@@ -42,6 +42,17 @@ class LockManager {
 
   class DirectedCycle {
    public:
+    // keeps track of which vertex has been processed.
+    std::set<txn_id_t> marked_;
+    // edge_to[v] = w means v comes to w.
+    std::unordered_map<txn_id_t, txn_id_t> edge_to_;
+    // keeps track of which vertices the search path have gone through
+    std::set<txn_id_t> on_stack_;
+    // Directed cycle (Null if no such cycle)
+    std::vector<txn_id_t> cycle_;
+
+    std::unordered_map<txn_id_t, std::vector<txn_id_t>> *waits_for_graph_;
+
     explicit DirectedCycle(std::unordered_map<txn_id_t, std::vector<txn_id_t>> *waits_for)
         : waits_for_graph_(waits_for){};
 
@@ -49,18 +60,28 @@ class LockManager {
       auto id = txn->GetTransactionId();
       // set txn state to abort
       txn->SetState(TransactionState::ABORTED);
-      txn_id_t to = edge_to_[id];
-      // remove the edge that creates the cycle
-      waits_for_graph_[id].erase(to);
+      // remove all the edges from this node
+      waits_for_graph_->erase(id);
+      // remove all the edges that linked to this node
+      for (auto& pair : *waits_for_graph_) {
+        std::vector<txn_id_t>& vector = pair.second;
+        auto it = vector.begin();
+
+        while (it != vector.end()) {
+          if (*it == id) {
+            // Remove the element from the vector
+            it = vector.erase(it);
+          } else {
+            ++it;
+          }
+        }
+      }
     }
 
     bool HasCycle(const std::vector<txn_id_t> &vector, txn_id_t *txn_id) {
-      // reset the cycle
-      cycle_.clear();
-
       // do the search
       for (const auto &tran_id : vector) {
-        // not yet marked and there is no cycle
+        // not yet marked
         if (marked_.count(tran_id) == 0) {
           Dfs(tran_id);
         }
@@ -68,14 +89,14 @@ class LockManager {
 
       // return result
       if(!cycle_.empty()) {
-        txn_id_t min = cycle_[0];
+        txn_id_t max = cycle_[0];
         for(const auto& tran_id : cycle_) {
-          if (tran_id < min) {
-            min = tran_id;
+          if (tran_id > max) {
+            max = tran_id;
           }
         }
         // set the txn_id to the lowest
-        *txn_id = min;
+        *txn_id = max;
       }
 
       return !cycle_.empty();
@@ -85,40 +106,30 @@ class LockManager {
     void Dfs(txn_id_t v) {
       on_stack_.insert(v);
       marked_.insert(v);
-      for (const auto& w : waits_for_graph_->find(v)->second) {
-        // short circuit if directed cycle found
-        if (!cycle_.empty()) {
-          return;
-        }
-        // found new vertex, so recur
-        if (marked_.count(w) == 0) {
-          edge_to_.emplace(w, v);
-          Dfs(w);
-        }
-        // trace back directed cycle
-        else if (on_stack_.count(w) == 1) {
-          for (int x = v; x != w; x = edge_to_[x]) {
-            cycle_.push_back(x);
+      if(waits_for_graph_->find(v) != waits_for_graph_->end()) {
+        for (const auto& w : waits_for_graph_->find(v)->second) {
+          // short circuit if directed cycle found
+          if (!cycle_.empty()) {
+            return;
           }
-          cycle_.push_back(w);
-          cycle_.push_back(v);
-        }
-      } // end for
-
+          // found new vertex, so recur
+          if (marked_.count(w) == 0) {
+            edge_to_.emplace(w, v);
+            Dfs(w);
+          }
+          // trace back directed cycle
+          else if (on_stack_.count(w) == 1) {
+            for (int x = v; x != w; x = edge_to_[x]) {
+              cycle_.push_back(x);
+            }
+            cycle_.push_back(w);
+            cycle_.push_back(v);
+          }
+        } // end for
+      }
       // uncheck
       on_stack_.erase(v);
     } // end Dfs
-
-    // keeps track of which vertex has been processed.
-    std::set<txn_id_t> marked_;
-    // edge_to[v] = w means v comes to w.
-    std::unordered_map<txn_id_t, txn_id_t> edge_to_;
-    // keeps track of which vertices the search path have gone through
-    std::set<txn_id_t> on_stack_;
-    // Directed cycle (Null if no such cycle)
-    std::vector<txn_id_t> cycle_;
-    
-    std::unordered_map<txn_id_t, std::vector<txn_id_t>> *waits_for_graph_;
   };
 
   /**
@@ -404,7 +415,9 @@ class LockManager {
   auto IsTxnHoldRowLock(Transaction *txn, const table_oid_t &oid) const -> bool;
   static void SetTxnState(Transaction *txn, LockMode mode);
   auto RowLockIsFree(Transaction *txn, LockMode mode, const std::shared_ptr<LockRequestQueue> &table) -> bool;
-
+  void BuildGraph();
+  void ProcessTableResources();
+  void ProcessRowResources();
  private:
   /** Fall 2022 */
   /** Structure that holds lock requests for a given table oid */
@@ -419,13 +432,12 @@ class LockManager {
 
   std::atomic<bool> enable_cycle_detection_;
   std::thread *cycle_detection_thread_;
+  std::mutex waits_for_latch_;
   /** Waits-for graph representation. */
   std::unordered_map<txn_id_t, std::vector<txn_id_t>> waits_for_;
-  std::mutex waits_for_latch_;
   std::unique_ptr<DirectedCycle> directed_cycle_{nullptr};
-  void BuildGraph();
-  void ProcessTableResources();
-  void ProcessRowResources();
+  std::unordered_map<txn_id_t , table_oid_t> waits_for_table_;
+  std::unordered_map<txn_id_t , RID> waits_for_row_;
 };
 
 }  // namespace bustub
