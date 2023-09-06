@@ -345,7 +345,16 @@ void LockManager::WakeUp(txn_id_t id) {
     waits_for_row_.erase(id);
   }
 }
-
+void LockManager::ResetGraph() {
+  waits_for_.clear();
+  waits_for_table_.clear();
+  waits_for_row_.clear();
+  // reset the cycle
+  cycle_.clear();
+  marked_.clear();
+  edge_to_.clear();
+  on_stack_.clear();
+}
 void LockManager::RunCycleDetection() {
   while (enable_cycle_detection_) {
     std::this_thread::sleep_for(cycle_detection_interval);
@@ -363,9 +372,7 @@ void LockManager::RunCycleDetection() {
       } // end while
 
       // reset the graph
-      waits_for_.clear();
-      waits_for_table_.clear();
-      waits_for_row_.clear();
+      ResetGraph();
       waits_for_latch_.unlock();
     }
   }

@@ -355,6 +355,7 @@ class LockManager {
   void Dfs(txn_id_t v);
   void BreakCycle(Transaction *txn);
   void WakeUp(txn_id_t id);
+  void ResetGraph();
 };
 
 }  // namespace bustub
