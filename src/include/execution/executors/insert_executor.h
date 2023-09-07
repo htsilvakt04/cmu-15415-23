@@ -60,6 +60,8 @@ class InsertExecutor : public AbstractExecutor {
   /** The child executor from which tuples are obtained */
   std::unique_ptr<AbstractExecutor> child_executor_;
   bool done_{false};
+  void LockTable();
+  void LockRow(RID rid);
 };
 
 }  // namespace bustub
