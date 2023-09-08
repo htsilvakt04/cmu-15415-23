@@ -16,9 +16,9 @@ Project 1: Buffer Pool Manager.
 
 Project 2: B+Tree Index.
 
-<img src="logo/project2.png" alt="Project 2 Result" height="200">
+<img src="logo/project-2.png" alt="Project 2 Result" height="200">
 
 Project 3 & 4: Query Execution and Concurrency Control.
 
-<img src="logo/project3.png" alt="Project 3 Result" height="200">
+<img src="logo/project-3.png" alt="Project 3 Result" height="200">
 <img src="logo/project4.png" alt="Project 4 Result" height="200">
