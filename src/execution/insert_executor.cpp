@@ -29,18 +29,16 @@ void InsertExecutor::LockTable() {
   try {
     // READ_UNCOMMITTED is allowed to take only X/IX locks
     if(txn->GetIsolationLevel() == IsolationLevel::READ_UNCOMMITTED) {
-      // if not yet hold the lock on the table
-      if (!txn->IsTableIntentionExclusiveLocked(oid) && !txn->IsTableExclusiveLocked(oid)) {
-        bool res = exec_ctx_->GetLockManager()->LockTable(txn, LockManager::LockMode::INTENTION_EXCLUSIVE, oid);
-        if (!res) {
-          throw ExecutionException("InsertExecutor failed to acquire table lock.");
-        }
+      bool res = exec_ctx_->GetLockManager()->LockTable(txn,LockManager::LockMode::INTENTION_EXCLUSIVE, oid);
+      if (!res) {
+        throw ExecutionException("InsertExecutor failed to acquire table lock.");
       }
     }
     else {
       // if not yet hold SIX, then acquire IX
       if (!txn->IsTableSharedIntentionExclusiveLocked(oid)) {
-        bool res = exec_ctx_->GetLockManager()->LockTable(txn, LockManager::LockMode::INTENTION_EXCLUSIVE, oid);
+        bool res = exec_ctx_->GetLockManager()->LockTable(txn,
+                                                          LockManager::LockMode::INTENTION_EXCLUSIVE, oid);
         if (!res) {
           throw ExecutionException("InsertExecutor failed to acquire table lock.");
         }

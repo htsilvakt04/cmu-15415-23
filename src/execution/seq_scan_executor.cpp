@@ -20,15 +20,18 @@ SeqScanExecutor::SeqScanExecutor(ExecutorContext *exec_ctx, const SeqScanPlanNod
       iter_(exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid())->table_->Begin(exec_ctx_->GetTransaction())) {}
 
 void SeqScanExecutor::LockTable() {
+  auto catalog = exec_ctx_->GetCatalog();
+  auto oid = catalog->GetTable(plan_->GetTableOid())->oid_;
+  auto txn = exec_ctx_->GetTransaction();
+
   if (exec_ctx_->GetTransaction()->GetIsolationLevel() != IsolationLevel::READ_UNCOMMITTED) {
-    auto catalog = exec_ctx_->GetCatalog();
-    auto oid = catalog->GetTable(plan_->GetTableOid())->oid_;
-    auto txn = exec_ctx_->GetTransaction();
     // acquire the table lock in IS mode
     try {
       // if not yet hold the lock on the table
-      if (!txn->IsTableIntentionSharedLocked(oid) && !txn->IsTableIntentionExclusiveLocked(oid)) {
-        bool res = exec_ctx_->GetLockManager()->LockTable(txn, LockManager::LockMode::INTENTION_SHARED, oid);
+      // we want a compatible lock on the table
+      if (!txn->IsTableIntentionExclusiveLocked(oid) && !txn->IsTableSharedIntentionExclusiveLocked(oid)) {
+        bool res = exec_ctx_->GetLockManager()->LockTable(
+            txn, LockManager::LockMode::INTENTION_SHARED, oid);
         if (!res) {
           throw ExecutionException("SeqScanExecutor failed to acquire table lock.");
         }
@@ -47,10 +50,9 @@ void SeqScanExecutor::LockRow() {
   if (exec_ctx_->GetTransaction()->GetIsolationLevel() != IsolationLevel::READ_UNCOMMITTED) {
     try {
       // if not yet hold the lock
-      if(!txn->IsRowSharedLocked(oid, rid) && !txn->IsRowExclusiveLocked(oid, rid)) {
-        bool res = exec_ctx_->GetLockManager()->LockRow(exec_ctx_->GetTransaction(),
-                                                        LockManager::LockMode::SHARED, oid,
-                                                        rid);
+      if (!txn->IsRowSharedLocked(oid, rid) && !txn->IsRowExclusiveLocked(oid, rid)) {
+        bool res =
+            exec_ctx_->GetLockManager()->LockRow(exec_ctx_->GetTransaction(), LockManager::LockMode::SHARED, oid, rid);
         if (!res) {
           throw ExecutionException("SeqScanExecutor failed to acquire row lock.");
         }
@@ -63,13 +65,17 @@ void SeqScanExecutor::LockRow() {
 void SeqScanExecutor::UnlockRow() {
   auto catalog = exec_ctx_->GetCatalog();
   auto table = catalog->GetTable(plan_->GetTableOid());
+  auto txn = exec_ctx_->GetTransaction();
+  auto rid = iter_->GetRid();
 
   if (exec_ctx_->GetTransaction()->GetIsolationLevel() == IsolationLevel::READ_COMMITTED) {
     auto oid = table->oid_;
     try {
-      bool res = exec_ctx_->GetLockManager()->UnlockRow(exec_ctx_->GetTransaction(), oid, iter_->GetRid());
-      if (!res) {
-        throw ExecutionException("SeqScanExecutor failed to release row lock.");
+      if (txn->IsRowSharedLocked(oid, rid)) {
+        bool res = exec_ctx_->GetLockManager()->UnlockRow(exec_ctx_->GetTransaction(), oid, iter_->GetRid());
+        if (!res) {
+          throw ExecutionException("SeqScanExecutor failed to release row lock.");
+        }
       }
     } catch (TransactionAbortException &e) {
       throw ExecutionException("SeqScanExecutor failed to release row lock " + e.GetInfo());
@@ -83,9 +89,8 @@ void SeqScanExecutor::UnlockTable() {
   auto txn = exec_ctx_->GetTransaction();
   if (exec_ctx_->GetTransaction()->GetIsolationLevel() == IsolationLevel::READ_COMMITTED) {
     try {
-      if(txn->IsTableIntentionSharedLocked(oid)) {
-        bool res = exec_ctx_->GetLockManager()->UnlockTable(
-            exec_ctx_->GetTransaction(), oid);
+      if (txn->IsTableIntentionSharedLocked(oid)) {
+        bool res = exec_ctx_->GetLockManager()->UnlockTable(txn, oid);
         if (!res) {
           throw ExecutionException("SeqScanExecutor failed to release table lock.");
         }
@@ -96,9 +101,7 @@ void SeqScanExecutor::UnlockTable() {
   }
 }
 
-void SeqScanExecutor::Init() {
-  LockTable();
-}
+void SeqScanExecutor::Init() { LockTable(); }
 
 auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   auto catalog = exec_ctx_->GetCatalog();
@@ -107,7 +110,7 @@ auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   while (iter_ != table->table_->End()) {
     LockRow();
     *tuple = *iter_;
-    *rid = iter_->GetRid();;
+    *rid = iter_->GetRid();
     UnlockRow();
     iter_++;
     return true;

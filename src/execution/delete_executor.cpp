@@ -29,18 +29,8 @@ void DeleteExecutor::LockTable() {
     // READ_UNCOMMITTED is allowed to take only X/IX locks
     if(txn->GetIsolationLevel() != IsolationLevel::READ_UNCOMMITTED) {
       // if not yet hold the lock on the table
-      if (!txn->IsTableIntentionExclusiveLocked(oid) && !txn->IsTableExclusiveLocked(oid)) {
-        bool res = exec_ctx_->GetLockManager()->LockTable(
-            txn, LockManager::LockMode::INTENTION_EXCLUSIVE, oid);
-        if (!res) {
-          throw ExecutionException("DeleteExecutor failed to acquire table lock.");
-        }
-      }
-    }
-    else {
-      // if not yet hold SIX, then acquire IX
-      if (!txn->IsTableSharedIntentionExclusiveLocked(oid)) {
-        bool res = exec_ctx_->GetLockManager()->LockTable(txn, LockManager::LockMode::INTENTION_EXCLUSIVE, oid);
+      if (!txn->IsTableExclusiveLocked(oid)) {
+        bool res = exec_ctx_->GetLockManager()->LockTable(txn, LockManager::LockMode::SHARED_INTENTION_EXCLUSIVE, oid);
         if (!res) {
           throw ExecutionException("DeleteExecutor failed to acquire table lock.");
         }
@@ -89,9 +79,9 @@ auto DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
       break;
     }
 
+    LockRow(child_rid);
     // mark as delete
     table->table_->MarkDelete(child_rid, exec_ctx_->GetTransaction());
-    LockRow(child_rid);
     // modify the indexes
     for (auto &index : cat->GetTableIndexes(table->name_)) {
       index->index_->DeleteEntry(
