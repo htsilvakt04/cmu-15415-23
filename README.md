@@ -12,7 +12,7 @@ BusTub supports basic SQL and comes with an interactive shell. You can get it ru
 
 Project 1: Buffer Pool Manager.
 
-<img src="logo/project1.png" alt="Project 1 Result" height="300">
+<img src="logo/project-1.png" alt="Project 1 Result" height="300">
 
 Project 2: B+Tree Index.
 
