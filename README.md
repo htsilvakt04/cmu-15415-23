@@ -18,7 +18,10 @@ Project 2: B+Tree Index.
 
 <img src="logo/project-2.png" alt="Project 2 Result" height="300">
 
-Project 3 & 4: Query Execution and Concurrency Control.
+Project 3: Query Execution.
 
 <img src="logo/project-3.png" alt="Project 3 Result" height="300">
+
+Project 4: 2 Phase Locking Protocol.
+
 <img src="logo/project4.png" alt="Project 4 Result" height="300">

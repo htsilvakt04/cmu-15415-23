@@ -362,7 +362,7 @@ void LockManager::RunCycleDetection() {
       // step 1: Build the Digraph
       BuildGraph();
       // step 2: Run the cycle detection algorithms on the graph
-      txn_id_t id;
+      txn_id_t id = 0;
       while (HasCycle(&id)) {
         auto txn = TransactionManager::GetTransaction(id);
         BreakCycle(txn);
@@ -668,14 +668,10 @@ auto LockManager::LockIsFree(Transaction *txn, LockMode mode, const std::shared_
     return false;
   }
 
-  // given the current set of granted locks, does this 'mode' compatible with all of them?
-  for (const auto &request : table->request_queue_) {
-    if (!NotConflictMode(request, mode, txn)) {
-      return false;
-    }
-  }
+  // Check if 'mode' is not in conflict with any granted requests
+  auto is_not_conflict_mode = [&](const auto &request) { return NotConflictMode(request, mode, txn); };
 
-  return true;
+  return std::all_of(table->request_queue_.begin(), table->request_queue_.end(), is_not_conflict_mode);
 }
 
 /// Check if there is any conflict 'mode' with some granted requests in the queue
