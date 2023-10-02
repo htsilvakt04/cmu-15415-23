@@ -20,7 +20,6 @@ InsertExecutor::InsertExecutor(ExecutorContext *exec_ctx, const InsertPlanNode *
                                std::unique_ptr<AbstractExecutor> &&child_executor)
     : AbstractExecutor(exec_ctx), plan_(plan), child_executor_(std::move(child_executor)) {}
 
-
 void InsertExecutor::LockTable() {
   auto catalog = exec_ctx_->GetCatalog();
   auto oid = catalog->GetTable(plan_->TableOid())->oid_;
@@ -28,17 +27,15 @@ void InsertExecutor::LockTable() {
   // acquire the table lock in IS mode
   try {
     // READ_UNCOMMITTED is allowed to take only X/IX locks
-    if(txn->GetIsolationLevel() == IsolationLevel::READ_UNCOMMITTED) {
-      bool res = exec_ctx_->GetLockManager()->LockTable(txn,LockManager::LockMode::INTENTION_EXCLUSIVE, oid);
+    if (txn->GetIsolationLevel() == IsolationLevel::READ_UNCOMMITTED) {
+      bool res = exec_ctx_->GetLockManager()->LockTable(txn, LockManager::LockMode::INTENTION_EXCLUSIVE, oid);
       if (!res) {
         throw ExecutionException("InsertExecutor failed to acquire table lock.");
       }
-    }
-    else {
+    } else {
       // if not yet hold SIX, then acquire IX
       if (!txn->IsTableSharedIntentionExclusiveLocked(oid)) {
-        bool res = exec_ctx_->GetLockManager()->LockTable(txn,
-                                                          LockManager::LockMode::INTENTION_EXCLUSIVE, oid);
+        bool res = exec_ctx_->GetLockManager()->LockTable(txn, LockManager::LockMode::INTENTION_EXCLUSIVE, oid);
         if (!res) {
           throw ExecutionException("InsertExecutor failed to acquire table lock.");
         }
@@ -55,9 +52,8 @@ void InsertExecutor::LockRow(RID rid) {
   auto oid = table->oid_;
 
   try {
-    bool res = exec_ctx_->GetLockManager()->LockRow(exec_ctx_->GetTransaction(),
-                                                    LockManager::LockMode::EXCLUSIVE, oid,
-                                                    rid);
+    bool res =
+        exec_ctx_->GetLockManager()->LockRow(exec_ctx_->GetTransaction(), LockManager::LockMode::EXCLUSIVE, oid, rid);
     if (!res) {
       throw ExecutionException("InsertExecutor failed to acquire row lock.");
     }
@@ -96,8 +92,8 @@ auto InsertExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
             child_tuple.KeyFromTuple(table->schema_, index->key_schema_, index->index_->GetKeyAttrs()), child_rid,
             exec_ctx_->GetTransaction());
         // add into the index write set
-        txn->GetIndexWriteSet()->
-            emplace_back(child_rid, table->oid_, WType::INSERT, child_tuple, index->index_oid_, cat);
+        txn->GetIndexWriteSet()->emplace_back(child_rid, table->oid_, WType::INSERT, child_tuple, index->index_oid_,
+                                              cat);
       }
       // increment the count
       c++;

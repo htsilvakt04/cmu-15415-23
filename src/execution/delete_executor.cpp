@@ -27,7 +27,7 @@ void DeleteExecutor::LockTable() {
   // acquire the table lock in IS mode
   try {
     // READ_UNCOMMITTED is allowed to take only X/IX locks
-    if(txn->GetIsolationLevel() != IsolationLevel::READ_UNCOMMITTED) {
+    if (txn->GetIsolationLevel() != IsolationLevel::READ_UNCOMMITTED) {
       // if not yet hold the lock on the table
       if (!txn->IsTableExclusiveLocked(oid)) {
         bool res = exec_ctx_->GetLockManager()->LockTable(txn, LockManager::LockMode::SHARED_INTENTION_EXCLUSIVE, oid);
@@ -47,9 +47,8 @@ void DeleteExecutor::LockRow(RID rid) {
   auto oid = table->oid_;
 
   try {
-    bool res = exec_ctx_->GetLockManager()->LockRow(exec_ctx_->GetTransaction(),
-                                                    LockManager::LockMode::EXCLUSIVE, oid,
-                                                    rid);
+    bool res =
+        exec_ctx_->GetLockManager()->LockRow(exec_ctx_->GetTransaction(), LockManager::LockMode::EXCLUSIVE, oid, rid);
     if (!res) {
       throw ExecutionException("DeleteExecutor failed to acquire row lock.");
     }
@@ -88,8 +87,7 @@ auto DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
           child_tuple.KeyFromTuple(table->schema_, index->key_schema_, index->index_->GetKeyAttrs()), child_rid,
           exec_ctx_->GetTransaction());
       // add into the index write set
-      txn->GetIndexWriteSet()->
-          emplace_back(child_rid, table->oid_, WType::DELETE, child_tuple, index->index_oid_, cat);
+      txn->GetIndexWriteSet()->emplace_back(child_rid, table->oid_, WType::DELETE, child_tuple, index->index_oid_, cat);
     }
     // increment the count
     c++;

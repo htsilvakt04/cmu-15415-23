@@ -30,8 +30,7 @@ void SeqScanExecutor::LockTable() {
       // if not yet hold the lock on the table
       // we want a compatible lock on the table
       if (!txn->IsTableIntentionExclusiveLocked(oid) && !txn->IsTableSharedIntentionExclusiveLocked(oid)) {
-        bool res = exec_ctx_->GetLockManager()->LockTable(
-            txn, LockManager::LockMode::INTENTION_SHARED, oid);
+        bool res = exec_ctx_->GetLockManager()->LockTable(txn, LockManager::LockMode::INTENTION_SHARED, oid);
         if (!res) {
           throw ExecutionException("SeqScanExecutor failed to acquire table lock.");
         }

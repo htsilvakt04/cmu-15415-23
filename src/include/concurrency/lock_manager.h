@@ -325,6 +325,7 @@ class LockManager {
   void BuildGraph();
   void ProcessTableResources();
   void ProcessRowResources();
+
  private:
   /** Fall 2022 */
   /** Structure that holds lock requests for a given table oid */
@@ -342,8 +343,8 @@ class LockManager {
   std::mutex waits_for_latch_;
   /** Waits-for graph representation. */
   std::unordered_map<txn_id_t, std::vector<txn_id_t>> waits_for_;
-  std::unordered_map<txn_id_t , table_oid_t> waits_for_table_;
-  std::unordered_map<txn_id_t , RID> waits_for_row_;
+  std::unordered_map<txn_id_t, table_oid_t> waits_for_table_;
+  std::unordered_map<txn_id_t, RID> waits_for_row_;
   // keeps track of which vertex has been processed.
   std::set<txn_id_t> marked_;
   // edge_to[v] = w means v comes to w.
