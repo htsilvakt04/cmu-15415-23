@@ -17,6 +17,8 @@
 #include <list>
 #include <memory>
 #include <mutex>  // NOLINT
+#include <set>
+#include <stack>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -36,6 +38,20 @@ class TransactionManager;
 class LockManager {
  public:
   enum class LockMode { SHARED, EXCLUSIVE, INTENTION_SHARED, INTENTION_EXCLUSIVE, SHARED_INTENTION_EXCLUSIVE };
+
+  /**
+   * Creates a new lock manager configured for the deadlock detection policy.
+   */
+  LockManager() {
+    enable_cycle_detection_ = true;
+    cycle_detection_thread_ = new std::thread(&LockManager::RunCycleDetection, this);
+  }
+
+  ~LockManager() {
+    enable_cycle_detection_ = false;
+    cycle_detection_thread_->join();
+    delete cycle_detection_thread_;
+  }
 
   /**
    * Structure to hold a lock request.
@@ -64,28 +80,14 @@ class LockManager {
   class LockRequestQueue {
    public:
     /** List of lock requests for the same resource (table or row) */
-    std::list<LockRequest *> request_queue_;
+    std::list<std::shared_ptr<LockRequest>> request_queue_;
     /** For notifying blocked transactions on this rid */
     std::condition_variable cv_;
-    /** txn_id of an upgrading transaction (if any) */
+    /** txn_id of an upgrading transaction. Unset when there is no upgrading request. */
     txn_id_t upgrading_ = INVALID_TXN_ID;
     /** coordination */
     std::mutex latch_;
   };
-
-  /**
-   * Creates a new lock manager configured for the deadlock detection policy.
-   */
-  LockManager() {
-    enable_cycle_detection_ = true;
-    cycle_detection_thread_ = new std::thread(&LockManager::RunCycleDetection, this);
-  }
-
-  ~LockManager() {
-    enable_cycle_detection_ = false;
-    cycle_detection_thread_->join();
-    delete cycle_detection_thread_;
-  }
 
   /**
    * [LOCK_NOTE]
@@ -129,7 +131,7 @@ class LockManager {
    *
    *    READ_UNCOMMITTED:
    *        The transaction is required to take only IX, X locks.
-   *        X, IX locks are allowed in the GROWING state.
+   *        IX, X locks are allowed in the GROWING state.
    *        S, IS, SIX locks are never allowed
    *
    *
@@ -162,8 +164,8 @@ class LockManager {
    *
    *
    * BOOK KEEPING:
-   *    If a lock is granted to a transaction, lock manager should update its
-   *    lock sets appropriately (check transaction.h)
+   *    If a lock is granted to a transaction, lock manager should update the transaction's lock sets
+   *    appropriately (check transaction.h)
    */
 
   /**
@@ -296,6 +298,32 @@ class LockManager {
    * Runs cycle detection in the background.
    */
   auto RunCycleDetection() -> void;
+  static void TxnAddTableLock(Transaction *txn, const table_oid_t &oid, LockMode lock_mode);
+  static void TxnAddRowLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid, const RID &rid);
+  auto LockIsFree(Transaction *txn, LockMode mode, const std::shared_ptr<LockRequestQueue> &table) -> bool;
+  auto IsHeldLock(Transaction *txn, LockMode lock_mode, const table_oid_t &oid,
+                  std::shared_ptr<LockRequestQueue> &table, std::mutex &queue_lock, bool &is_abort) -> bool;
+  void CheckSatisfyTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request,
+                                  LockMode upgrade_lock_mode, std::mutex &queue_lock);
+  void CheckSatisfyRowTransitionCond(Transaction *txn, const std::shared_ptr<LockRequest> &request,
+                                     LockMode row_lock_mode, std::mutex &queue_lock);
+  static auto NotConflictMode(const std::shared_ptr<LockRequest> &request, LockMode mode, Transaction *txn) -> bool;
+  void CheckAbortCond(Transaction *txn, const table_oid_t &oid, LockMode mode, bool is_lock_row = false);
+  void CheckRowTableCompatible(Transaction *txn, const table_oid_t &oid, LockMode row_mode);
+  auto IsHeldLockRow(Transaction *txn, LockMode row_lock_mode, const table_oid_t &oid, const RID &rid,
+                     const std::shared_ptr<LockRequestQueue> &row, bool &is_abort) -> bool;
+  auto static NotConflictRowMode(const std::shared_ptr<LockRequest> &request, LockMode mode, Transaction *txn) -> bool;
+  void CheckTableUnlockAbortCond(Transaction *txn, const table_oid_t &oid,
+                                 const std::shared_ptr<LockRequestQueue> &table,
+                                 std::list<std::shared_ptr<LockRequest>>::iterator &table_iterator);
+  void CheckRowUnlockAbortCond(Transaction *txn, const std::shared_ptr<LockRequestQueue> &table,
+                               std::list<std::shared_ptr<LockRequest>>::iterator &row_iterator);
+  auto IsTxnHoldRowLock(Transaction *txn, const table_oid_t &oid) const -> bool;
+  static void SetTxnState(Transaction *txn, LockMode mode);
+  auto RowLockIsFree(Transaction *txn, LockMode mode, const std::shared_ptr<LockRequestQueue> &table) -> bool;
+  void BuildGraph();
+  void ProcessTableResources();
+  void ProcessRowResources();
 
  private:
   /** Fall 2022 */
@@ -311,9 +339,23 @@ class LockManager {
 
   std::atomic<bool> enable_cycle_detection_;
   std::thread *cycle_detection_thread_;
+  std::mutex waits_for_latch_;
   /** Waits-for graph representation. */
   std::unordered_map<txn_id_t, std::vector<txn_id_t>> waits_for_;
-  std::mutex waits_for_latch_;
+  std::unordered_map<txn_id_t, table_oid_t> waits_for_table_;
+  std::unordered_map<txn_id_t, RID> waits_for_row_;
+  // keeps track of which vertex has been processed.
+  std::set<txn_id_t> marked_;
+  // edge_to[v] = w means v comes to w.
+  std::unordered_map<txn_id_t, txn_id_t> edge_to_;
+  // keeps track of which vertices the search path have gone through
+  std::set<txn_id_t> on_stack_;
+  // Directed cycle (Null if no such cycle)
+  std::vector<txn_id_t> cycle_;
+  void Dfs(txn_id_t v);
+  void BreakCycle(Transaction *txn);
+  void WakeUp(txn_id_t id);
+  void ResetGraph();
 };
 
 }  // namespace bustub

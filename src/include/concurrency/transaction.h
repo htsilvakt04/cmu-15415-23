@@ -323,6 +323,8 @@ class Transaction {
    */
   inline void SetPrevLSN(lsn_t prev_lsn) { prev_lsn_ = prev_lsn; }
 
+  std::mutex latch_;
+
  private:
   /** The current transaction state. */
   TransactionState state_{TransactionState::GROWING};
@@ -339,8 +341,6 @@ class Transaction {
   std::shared_ptr<std::deque<IndexWriteRecord>> index_write_set_;
   /** The LSN of the last record written by the transaction. */
   lsn_t prev_lsn_;
-
-  std::mutex latch_;
 
   /** Concurrent index: the pages that were latched during index operation. */
   std::shared_ptr<std::deque<Page *>> page_set_;
