@@ -24,4 +24,4 @@ Project 3: Query Execution.
 
 Project 4: 2 Phase Locking Protocol.
 
-<img src="logo/project4.png" alt="Project 4 Result" height="300">
+<img src="logo/project-4.png" alt="Project 4 Result" height="300">
