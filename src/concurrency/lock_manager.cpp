@@ -266,9 +266,8 @@ void LockManager::Dfs(txn_id_t v) {
       if (marked_.count(w) == 0) {
         edge_to_.emplace(w, v);
         Dfs(w);
-      }
-      // trace back directed cycle
-      else if (on_stack_.count(w) == 1) {
+      } else if (on_stack_.count(w) == 1) {
+        // trace back directed cycle
         for (int x = v; x != w; x = edge_to_[x]) {
           cycle_.push_back(x);
         }
